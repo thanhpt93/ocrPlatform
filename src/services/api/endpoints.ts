@@ -32,6 +32,7 @@ export const catalogApi = {
 
 // Packages API
 export const packagesApi = {
+  getPackages: () => api.get<any[]>('/packages'),
   getPackageById: (id: string) => api.get<any>(`/packages/${id}`),
   getCreditRates: () => api.get<any[]>('/credit-rates'),
 

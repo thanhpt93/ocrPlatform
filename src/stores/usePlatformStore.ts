@@ -119,11 +119,11 @@ interface PlatformState {
   setLicenseStatus: (id: string, status: LicenseStatus, note?: string) => void;
   renewLicense: (id: string, additionalMonths: number) => void;
 
-  // Actions - Subscriptions & Checkout
+  // Actions - Subscriptions & Orders
   checkoutPackage: (params: {
     packageId: string;
     paymentMethod: string;
-  }) => { success: boolean; orderId: string; subscriptionId: string; licenseId: string };
+  }) => Promise<{ success: boolean; orderId: string; subscriptionId: string; licenseId: string; licenseKey?: string; maskedKey?: string }>;
   renewSubscription: (id: string) => void;
   cancelSubscription: (id: string) => void;
 
@@ -151,29 +151,31 @@ const loadStoredState = () => {
 };
 
 const saved = loadStoredState();
+const initialUser = api.getCurrentUser();
+const isRealCustomer = Boolean(initialUser && initialUser.id && !initialUser.id.startsWith('cust-'));
 
 export const usePlatformStore = create<PlatformState>((set, get) => ({
   services: saved?.services || initialServices,
   docTypes: saved?.docTypes || initialDocTypes,
   packages: saved?.packages || initialPackages,
   customers: saved?.customers || initialCustomers,
-  subscriptions: saved?.subscriptions || initialSubscriptions,
-  licenses: saved?.licenses || initialLicenses,
-  jobs: saved?.jobs || initialJobs,
-  orders: saved?.orders || initialOrders,
-  invoices: saved?.invoices || initialInvoices,
-  payments: saved?.payments || initialPayments,
+  subscriptions: isRealCustomer ? (saved?.subscriptions?.filter((s: any) => s.customerId === initialUser.id) || []) : (saved?.subscriptions || initialSubscriptions),
+  licenses: isRealCustomer ? (saved?.licenses?.filter((l: any) => l.customerId === initialUser.id) || []) : (saved?.licenses || initialLicenses),
+  jobs: isRealCustomer ? (saved?.jobs?.filter((j: any) => j.customerId === initialUser.id) || []) : (saved?.jobs || initialJobs),
+  orders: isRealCustomer ? (saved?.orders?.filter((o: any) => o.customerId === initialUser.id) || []) : (saved?.orders || initialOrders),
+  invoices: isRealCustomer ? (saved?.invoices?.filter((i: any) => i.customerId === initialUser.id) || []) : (saved?.invoices || initialInvoices),
+  payments: isRealCustomer ? (saved?.payments?.filter((p: any) => p.customerId === initialUser.id) || []) : (saved?.payments || initialPayments),
   workers: saved?.workers || initialWorkers,
   queues: saved?.queues || initialQueues,
   adminUsers: saved?.adminUsers || initialAdminUsers,
   auditLogs: saved?.auditLogs || initialAuditLogs,
-  dailyStats: saved?.dailyStats || initial30DayStats,
+  dailyStats: isRealCustomer ? [] : (saved?.dailyStats || initial30DayStats),
 
   activePortal: 'customer',
-  activeCustomerId: saved?.activeCustomerId || 'cust-1',
+  activeCustomerId: initialUser?.id || saved?.activeCustomerId || 'cust-1',
   searchQuery: '',
   backendConnected: false,
-  currentUser: api.getCurrentUser(),
+  currentUser: initialUser,
 
   setActivePortal: (portal) => set({ activePortal: portal }),
   setActiveCustomerId: (customerId) => {
@@ -192,7 +194,7 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
         full_name: res.full_name,
         role: res.role,
       });
-      set({ currentUser: api.getCurrentUser() });
+      set({ currentUser: api.getCurrentUser(), activeCustomerId: res.user_id });
       await get().syncWithBackend();
       return true;
     } catch (e) {
@@ -203,25 +205,6 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
 
   syncWithBackend: async () => {
     try {
-      // Auto-authenticate as default demo customer if not authenticated yet
-      if (!localStorage.getItem('ocr_access_token')) {
-        try {
-          const authRes = await authApi.login({
-            email: 'alex@techcorp.io',
-            password: 'Customer@123456',
-          });
-          api.setTokens(authRes.access_token, authRes.refresh_token, {
-            id: authRes.user_id,
-            email: authRes.email,
-            full_name: authRes.full_name,
-            role: authRes.role,
-          });
-          set({ currentUser: api.getCurrentUser() });
-        } catch (authErr) {
-          console.warn('Backend auto-login skipped:', authErr);
-        }
-      }
-
       // 1. Fetch Services
       const rawServices = await catalogApi.getServices();
       const mappedServices: OCRService[] = rawServices.map((s) => ({
@@ -259,7 +242,7 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
       }));
 
       // 3. Fetch Packages
-      const rawPackages = await packagesApi.adminGetPackages();
+      const rawPackages = await packagesApi.getPackages();
       const mappedPackages: Package[] = rawPackages.map((p) => {
         const cur = p.current_version;
         return {
@@ -286,90 +269,144 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
       });
 
       // 4. Fetch Subscriptions & Licenses if authenticated
-      let mappedSubs = get().subscriptions;
-      let mappedLics = get().licenses;
-      let mappedOrders = get().orders;
+      const curUser = api.getCurrentUser();
+      let mappedSubs: Subscription[] = [];
+      let mappedLics: License[] = [];
+      let mappedOrders: Order[] = [];
 
-      try {
-        const rawSubs = await subscriptionsApi.getUserSubscriptions();
-        if (rawSubs && rawSubs.length > 0) {
-          mappedSubs = rawSubs.map((s) => ({
-            id: s.id,
-            customerId: s.user_id,
-            customerName: 'Alex Morgan (TechCorp)',
-            serviceId: s.service_id,
-            serviceName: s.service_name || '',
-            packageId: s.package_id || s.package_version_id,
-            packageName: s.package_name || '',
-            startDate: s.start_date.split('T')[0],
-            endDate: s.end_date.split('T')[0],
-            autoRenew: s.auto_renew,
-            totalQuota: s.total_quota,
-            usedQuota: s.used_quota,
-            remainingQuota: s.remaining_quota,
-            status: s.status,
-            price: 89,
-            billingCycle: 'monthly',
-          }));
+      if (curUser) {
+        try {
+          const rawSubs = await subscriptionsApi.getUserSubscriptions();
+          if (Array.isArray(rawSubs)) {
+            mappedSubs = rawSubs.map((s) => ({
+              id: s.id,
+              customerId: s.user_id,
+              customerName: curUser.company_name || curUser.full_name || 'Customer Account',
+              serviceId: s.service_id,
+              serviceName: s.service_name || '',
+              packageId: s.package_id || s.package_version_id,
+              packageName: s.package_name || '',
+              startDate: s.start_date.split('T')[0],
+              endDate: s.end_date.split('T')[0],
+              autoRenew: s.auto_renew,
+              totalQuota: s.total_quota,
+              usedQuota: s.used_quota,
+              remainingQuota: s.remaining_quota,
+              status: s.status,
+              price: 0,
+              billingCycle: 'monthly',
+            }));
+          }
+        } catch (subErr) {
+          console.warn('Backend subscriptions fetch note:', subErr);
         }
-      } catch (subErr) {
-        // graceful fallback
+
+        try {
+          const rawLics = await licensesApi.getUserLicenses();
+          if (Array.isArray(rawLics)) {
+            mappedLics = rawLics.map((l) => ({
+              id: l.id,
+              licenseKey: l.masked_key,
+              maskedKey: l.masked_key,
+              customerId: l.user_id,
+              customerName: curUser.company_name || curUser.full_name || 'Customer Account',
+              serviceId: l.service_id,
+              serviceName: l.service_name || '',
+              packageId: l.package_id || '',
+              packageName: l.package_name || '',
+              subscriptionId: l.subscription_id,
+              quota: l.quota,
+              usedQuota: l.used_quota,
+              startDate: l.issued_at.split('T')[0],
+              expirationDate: l.expires_at.split('T')[0],
+              status: l.status,
+              history: [],
+            }));
+          }
+        } catch (licErr) {
+          console.warn('Backend licenses fetch note:', licErr);
+        }
+
+        try {
+          const rawOrders = await ordersApi.getUserOrders();
+          if (Array.isArray(rawOrders)) {
+            mappedOrders = rawOrders.map((o) => ({
+              id: o.id,
+              orderNumber: o.order_number,
+              customerId: o.user_id,
+              customerName: curUser.company_name || curUser.full_name || 'Customer Account',
+              serviceName: o.service_name || '',
+              packageName: o.package_name || '',
+              amount: o.amount,
+              currency: o.currency as any,
+              date: o.created_at.split('T')[0],
+              status: o.status,
+              paymentMethod: 'Credit Card',
+            }));
+          }
+        } catch (ordErr) {
+          console.warn('Backend orders fetch note:', ordErr);
+        }
+      } else {
+        mappedSubs = get().subscriptions;
+        mappedLics = get().licenses;
+        mappedOrders = get().orders;
       }
 
-      try {
-        const rawLics = await licensesApi.getUserLicenses();
-        if (rawLics && rawLics.length > 0) {
-          mappedLics = rawLics.map((l) => ({
-            id: l.id,
-            licenseKey: l.masked_key,
-            maskedKey: l.masked_key,
-            customerId: l.user_id,
-            customerName: 'Alex Morgan (TechCorp)',
-            serviceId: l.service_id,
-            serviceName: l.service_name || '',
-            packageId: l.package_id || '',
-            packageName: l.package_name || '',
-            subscriptionId: l.subscription_id,
-            quota: l.quota,
-            usedQuota: l.used_quota,
-            startDate: l.issued_at.split('T')[0],
-            expirationDate: l.expires_at.split('T')[0],
-            status: l.status,
-            history: [],
-          }));
+      // Add currentUser into customers list to ensure they exist
+      let updatedCustomers = [...get().customers];
+      if (curUser) {
+        const existingIdx = updatedCustomers.findIndex((c) => c.id === curUser.id || c.email === curUser.email);
+        const curCustomerObj: Customer = {
+          id: curUser.id,
+          orgName: curUser.company_name || curUser.full_name || curUser.email,
+          email: curUser.email,
+          phone: curUser.phone || '',
+          address: '',
+          taxId: '',
+          registrationDate: new Date().toISOString().split('T')[0],
+          tier: 'Standard',
+          status: 'active',
+          memberCount: 1,
+          members: [
+            {
+              id: curUser.id,
+              name: curUser.full_name || 'Customer',
+              email: curUser.email,
+              role: 'Owner',
+              status: 'active',
+              addedDate: new Date().toISOString().split('T')[0],
+            },
+          ],
+          activeSubscriptionsCount: mappedSubs.length,
+          activeLicensesCount: mappedLics.length,
+          totalUsagePages: 0,
+          monthlySpend: 0,
+        };
+        if (existingIdx >= 0) {
+          updatedCustomers[existingIdx] = { ...updatedCustomers[existingIdx], ...curCustomerObj };
+        } else {
+          updatedCustomers = [curCustomerObj, ...updatedCustomers];
         }
-      } catch (licErr) {
-        // graceful fallback
       }
 
-      try {
-        const rawOrders = await ordersApi.getUserOrders();
-        if (rawOrders && rawOrders.length > 0) {
-          mappedOrders = rawOrders.map((o) => ({
-            id: o.id,
-            orderNumber: o.order_number,
-            customerId: o.user_id,
-            customerName: 'Alex Morgan (TechCorp)',
-            serviceName: o.service_name || '',
-            packageName: o.package_name || '',
-            amount: o.amount,
-            currency: o.currency as any,
-            date: o.created_at.split('T')[0],
-            status: o.status,
-            paymentMethod: 'Credit Card',
-          }));
-        }
-      } catch (ordErr) {
-        // graceful fallback
-      }
+      const userJobs = curUser ? get().jobs.filter((j) => j.customerId === curUser.id) : get().jobs;
+      const userInvoices = curUser ? get().invoices.filter((i) => i.customerId === curUser.id) : get().invoices;
+      const userPayments = curUser ? get().payments.filter((p) => p.customerId === curUser.id) : get().payments;
 
       set({
+        currentUser: curUser,
+        activeCustomerId: curUser ? curUser.id : get().activeCustomerId,
+        customers: updatedCustomers,
         services: mappedServices.length > 0 ? mappedServices : get().services,
         docTypes: mappedDocTypes.length > 0 ? mappedDocTypes : get().docTypes,
         packages: mappedPackages.length > 0 ? mappedPackages : get().packages,
         subscriptions: mappedSubs,
         licenses: mappedLics,
         orders: mappedOrders,
+        jobs: userJobs,
+        invoices: userInvoices,
+        payments: userPayments,
         backendConnected: true,
       });
 
@@ -411,7 +448,7 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
       sla: newService.sla,
       status: newService.status,
       supported_doc_type_ids: newService.supportedDocTypeIds,
-    }).catch((e) => console.warn('Backend addService skipped:', e));
+    }).catch((e: any) => console.warn('Backend addService skipped:', e));
   },
 
   updateService: (id, updated) => {
@@ -438,7 +475,7 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
       sla: updated.sla,
       status: updated.status,
       supported_doc_type_ids: updated.supportedDocTypeIds,
-    }).catch((e) => console.warn('Backend updateService skipped:', e));
+    }).catch((e: any) => console.warn('Backend updateService skipped:', e));
   },
 
   deleteService: (id) => {
@@ -458,7 +495,7 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
       return next;
     });
     if (status === 'published' || status === 'draft') {
-      catalogApi.adminPublishService(id, status === 'published').catch((e) => console.warn(e));
+      catalogApi.adminPublishService(id, status === 'published').catch((e: any) => console.warn(e));
     }
   },
 
@@ -469,35 +506,39 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
       id: `doc-${Date.now()}`,
     };
     set((state) => {
-      const next = { docTypes: [...state.docTypes, item] };
+      const next = { docTypes: [item, ...state.docTypes] };
       persist({ ...state, ...next });
       return next;
     });
+
     catalogApi.adminCreateDocumentType({
       code: docType.code,
       name: docType.name,
-      description: docType.description,
       category: docType.category,
+      description: docType.description,
       example_image: docType.exampleImage,
+      supported_service_ids: docType.supportedServiceIds,
       status: docType.status,
-    }).catch((e) => console.warn(e));
+    }).catch((e: any) => console.warn('Backend addDocType skipped:', e));
   },
 
-  updateDocType: (id, docType) => {
+  updateDocType: (id, updated) => {
     set((state) => {
       const next = {
-        docTypes: state.docTypes.map((d) => (d.id === id ? { ...d, ...docType } : d)),
+        docTypes: state.docTypes.map((d) => (d.id === id ? { ...d, ...updated } : d)),
       };
       persist({ ...state, ...next });
       return next;
     });
+
     catalogApi.adminUpdateDocumentType(id, {
-      name: docType.name,
-      description: docType.description,
-      category: docType.category,
-      example_image: docType.exampleImage,
-      status: docType.status,
-    }).catch((e) => console.warn(e));
+      name: updated.name,
+      category: updated.category,
+      description: updated.description,
+      example_image: updated.exampleImage,
+      supported_service_ids: updated.supportedServiceIds,
+      status: updated.status,
+    }).catch((e: any) => console.warn('Backend updateDocType skipped:', e));
   },
 
   deleteDocType: (id) => {
@@ -510,30 +551,62 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
 
   // Packages
   addPackage: (pkg) => {
-    const item: Package = {
+    const newPkg: Package = {
       ...pkg,
       id: `pkg-${Date.now()}`,
     };
     set((state) => {
-      const next = { packages: [item, ...state.packages] };
+      const next = { packages: [newPkg, ...state.packages] };
       persist({ ...state, ...next });
       return next;
     });
+
+    packagesApi.adminCreatePackage({
+      code: pkg.code,
+      name: pkg.name,
+      tier: pkg.tier,
+      service_id: pkg.serviceId,
+      price: pkg.price,
+      currency: pkg.currency,
+      quota_type: pkg.quotaType,
+      quota_amount: pkg.quotaAmount,
+      duration: pkg.duration,
+      billing_type: pkg.billingType,
+      api_access: pkg.apiAccess,
+      batch_processing: pkg.batchProcessing,
+      priority_processing: pkg.priorityProcessing,
+      auto_renewal: pkg.autoRenewal,
+      overage_policy: pkg.overagePolicy,
+      features: pkg.features,
+    }).catch((e: any) => console.warn('Backend addPackage skipped:', e));
   },
 
-  updatePackage: (id, pkg) => {
+  updatePackage: (id, updated) => {
     set((state) => {
       const next = {
-        packages: state.packages.map((p) => (p.id === id ? { ...p, ...pkg } : p)),
+        packages: state.packages.map((p) => (p.id === id ? { ...p, ...updated } : p)),
       };
       persist({ ...state, ...next });
       return next;
     });
+
     packagesApi.adminUpdatePackage(id, {
-      name: pkg.name,
-      tier: pkg.tier,
-      status: pkg.status,
-    }).catch((e) => console.warn(e));
+      name: updated.name,
+      tier: updated.tier,
+      price: updated.price,
+      currency: updated.currency,
+      quota_type: updated.quotaType,
+      quota_amount: updated.quotaAmount,
+      duration: updated.duration,
+      billing_type: updated.billingType,
+      api_access: updated.apiAccess,
+      batch_processing: updated.batchProcessing,
+      priority_processing: updated.priorityProcessing,
+      auto_renewal: updated.autoRenewal,
+      overage_policy: updated.overagePolicy,
+      status: updated.status,
+      features: updated.features,
+    }).catch((e: any) => console.warn('Backend updatePackage skipped:', e));
   },
 
   deletePackage: (id) => {
@@ -545,10 +618,10 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
   },
 
   // Customers
-  updateCustomer: (id, customer) => {
+  updateCustomer: (id, updated) => {
     set((state) => {
       const next = {
-        customers: state.customers.map((c) => (c.id === id ? { ...c, ...customer } : c)),
+        customers: state.customers.map((c) => (c.id === id ? { ...c, ...updated } : c)),
       };
       persist({ ...state, ...next });
       return next;
@@ -560,8 +633,8 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
       const next = {
         customers: state.customers.map((c) => {
           if (c.id === id) {
-            const newStatus = c.status === 'active' ? 'suspended' : 'active';
-            return { ...c, status: newStatus as CustomerStatus };
+            const nextStatus: CustomerStatus = c.status === 'active' ? 'suspended' : 'active';
+            return { ...c, status: nextStatus };
           }
           return c;
         }),
@@ -572,16 +645,18 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
   },
 
   addCustomerMember: (customerId, member) => {
-    const newMember = {
-      ...member,
-      id: `mem-${Date.now()}`,
-      status: 'active' as const,
-      addedDate: new Date().toISOString().split('T')[0],
-    };
     set((state) => {
       const next = {
         customers: state.customers.map((c) => {
           if (c.id === customerId) {
+            const newMember = {
+              id: `m-${Date.now()}`,
+              name: member.name,
+              email: member.email,
+              role: member.role,
+              status: 'active' as const,
+              addedDate: new Date().toISOString().split('T')[0],
+            };
             return {
               ...c,
               memberCount: c.memberCount + 1,
@@ -598,20 +673,21 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
 
   // Licenses
   generateSingleLicense: (params) => {
+    const state = get();
+    const service = state.services.find((s) => s.id === params.serviceId);
+    const pkg = state.packages.find((p) => p.id === params.packageId);
+    const customer = state.customers.find((c) => c.id === params.customerId);
+
     const now = new Date();
     const expDate = new Date();
     expDate.setMonth(expDate.getMonth() + params.expirationMonths);
 
-    const customer = get().customers.find((c) => c.id === params.customerId);
-    const service = get().services.find((s) => s.id === params.serviceId);
-    const pkg = get().packages.find((p) => p.id === params.packageId);
-
-    const randK = Math.random().toString(36).substring(2, 10).toUpperCase();
-    const fullKey = `OCR-2026-${randK.slice(0, 4)}-${randK.slice(4, 8)}-${Date.now().toString().slice(-4)}`;
+    const rand = Math.random().toString(36).substring(2, 10).toUpperCase();
+    const fullKey = `OCR-2026-${rand.slice(0, 4)}-${rand.slice(4, 8)}-${Date.now().toString().slice(-4)}`;
     const masked = `OCR-2026-****-****-${Date.now().toString().slice(-4)}`;
 
     const newLic: License = {
-      id: `lic-${Date.now()}`,
+      id: `lic-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
       licenseKey: fullKey,
       maskedKey: masked,
       customerId: params.customerId,
@@ -664,7 +740,7 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
     const cleanKey = key.trim().toUpperCase();
     
     // Call backend activation asynchronously
-    licensesApi.activateLicense(cleanKey).catch((e) => console.warn('Backend activation note:', e));
+    licensesApi.activateLicense(cleanKey).catch((e: any) => console.warn('Backend activation note:', e));
 
     const state = get();
     const target = state.licenses.find(
@@ -772,14 +848,29 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
   },
 
   // Checkout Package
-  checkoutPackage: (params) => {
+  checkoutPackage: async (params) => {
     const state = get();
     const pkg = state.packages.find((p) => p.id === params.packageId || p.code === params.packageId);
     if (!pkg) {
       throw new Error('Package not found');
     }
 
-    const customer = state.customers.find((c) => c.id === state.activeCustomerId) || state.customers[0];
+    const activeId = state.currentUser?.id || state.activeCustomerId;
+    const customer = state.customers.find((c) => c.id === activeId) || {
+      id: activeId,
+      orgName: state.currentUser?.company_name || state.currentUser?.full_name || 'Customer',
+      email: state.currentUser?.email || 'customer@example.com',
+      phone: '',
+      registrationDate: new Date().toISOString().split('T')[0],
+      tier: 'Standard' as any,
+      status: 'active' as any,
+      memberCount: 1,
+      members: [],
+      activeSubscriptionsCount: 1,
+      activeLicensesCount: 1,
+      totalUsagePages: 0,
+      monthlySpend: 0,
+    };
     const service = state.services.find((s) => s.id === pkg.serviceId);
 
     const now = new Date();
@@ -820,6 +911,7 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
       dueDate: expDate.toISOString().split('T')[0],
       paidDate: now.toISOString().split('T')[0],
       status: 'paid',
+      downloadUrl: '#',
     };
 
     // Payment
@@ -902,18 +994,27 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
     });
 
     // Fire real backend order & checkout API
-    ordersApi.createOrder(pkg.id).then((bOrder) => {
-      ordersApi.checkout(bOrder.id, { payment_method: params.paymentMethod }).then(() => {
-        get().syncWithBackend();
-      });
-    }).catch((e) => console.warn('Backend order checkout fallback:', e));
-
-    return {
-      success: true,
-      orderId,
-      subscriptionId: subId,
-      licenseId: licId,
-    };
+    try {
+      const bOrder = await ordersApi.createOrder(pkg.id);
+      const chkRes = await ordersApi.checkout(bOrder.id, { payment_method: params.paymentMethod });
+      await get().syncWithBackend();
+      return {
+        success: true,
+        orderId: bOrder.order_number,
+        subscriptionId: chkRes.subscription_id || subId,
+        licenseId: chkRes.license_id || licId,
+        licenseKey: chkRes.license_key,
+        maskedKey: chkRes.masked_key,
+      };
+    } catch (e: any) {
+      console.warn('Backend order checkout fallback:', e);
+      return {
+        success: true,
+        orderId,
+        subscriptionId: subId,
+        licenseId: licId,
+      };
+    }
   },
 
   renewSubscription: (id) => {
@@ -940,18 +1041,27 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
   cancelSubscription: (id) => {
     set((state) => {
       const next = {
-        subscriptions: state.subscriptions.map((s) => (s.id === id ? { ...s, status: 'cancelled' as const } : s)),
+        subscriptions: state.subscriptions.map((s) => {
+          if (s.id === id) {
+            return {
+              ...s,
+              status: 'cancelled' as const,
+              autoRenew: false,
+            };
+          }
+          return s;
+        }),
       };
       persist({ ...state, ...next });
       return next;
     });
   },
 
-  // Jobs
+  // OCR Jobs
   retryJob: (jobId) => {
     set((state) => {
       const next = {
-        jobs: state.jobs.map((j) => (j.id === jobId ? { ...j, status: 'queued' as const, errorReason: undefined } : j)),
+        jobs: state.jobs.map((j) => (j.id === jobId ? { ...j, status: 'processing' as const } : j)),
       };
       persist({ ...state, ...next });
       return next;
@@ -961,15 +1071,9 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
   submitNewJob: (job) => {
     const newJob: OCRJob = {
       ...job,
-      id: `JOB-2026-${Date.now().toString().slice(-5)}`,
-      submissionTime: 'Just now',
-      status: 'queued',
-      confidenceScore: 0.99,
-      extractedDataPreview: {
-        document_number: 'TX-9902182',
-        total_amount: '4,520.00 USD',
-        confidence: 0.992,
-      },
+      id: `JOB-${Date.now().toString().slice(-6)}`,
+      submissionTime: new Date().toLocaleString(),
+      status: 'processing',
     };
     set((state) => {
       const next = { jobs: [newJob, ...state.jobs] };
@@ -978,14 +1082,17 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
     });
   },
 
-  // Workers
+  // System & Ops
   toggleWorkerStatus: (workerId) => {
     set((state) => {
       const next = {
         workers: state.workers.map((w) => {
           if (w.id === workerId) {
-            const newStatus = w.status === 'online' ? 'offline' : 'online';
-            return { ...w, status: newStatus as WorkerNode['status'] };
+            const nextStatus: 'online' | 'busy' | 'offline' | 'degraded' = w.status === 'online' ? 'offline' : 'online';
+            return {
+              ...w,
+              status: nextStatus,
+            };
           }
           return w;
         }),
@@ -1041,7 +1148,7 @@ function persist(state: Partial<PlatformState>) {
       activeCustomerId: state.activeCustomerId,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
-  } catch (e) {
+  } catch (e: any) {
     console.error('Failed to save local state:', e);
   }
 }

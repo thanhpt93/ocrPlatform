@@ -7,6 +7,10 @@ from app.modules.packages.service import PackageService
 
 router = APIRouter(tags=["Packages"])
 
+@router.get("/packages", response_model=List[PackageResponse])
+def get_packages(db: Session = Depends(get_db)):
+    return PackageService.get_all_packages(db)
+
 @router.get("/packages/{package_id}", response_model=PackageResponse)
 def get_package_detail(package_id: str, db: Session = Depends(get_db)):
     return PackageService.get_package_by_id(db, package_id)

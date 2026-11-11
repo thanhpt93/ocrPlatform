@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   CreditCard,
@@ -22,9 +22,16 @@ import { formatDate, formatNumber, formatCurrency } from '@/utils/formatters';
 
 export const SubscriptionsPage: React.FC = () => {
   const navigate = useNavigate();
-  const { subscriptions, activeCustomerId, renewSubscription, cancelSubscription } = usePlatformStore();
+  const { subscriptions, activeCustomerId, currentUser, renewSubscription, cancelSubscription, syncWithBackend } = usePlatformStore();
 
-  const customerSubs = subscriptions.filter((s) => s.customerId === activeCustomerId);
+  useEffect(() => {
+    syncWithBackend();
+  }, []);
+
+  const effectiveCustomerId = currentUser?.id || activeCustomerId;
+  const customerSubs = subscriptions.filter(
+    (s) => s.customerId === effectiveCustomerId || (!currentUser && s.customerId === activeCustomerId)
+  );
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');

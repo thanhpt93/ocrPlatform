@@ -29,6 +29,12 @@ class OrderService:
     def create_order(db: Session, user: User, req: OrderCreate) -> OrderResponse:
         package_version = db.query(PackageVersion).filter(PackageVersion.id == req.package_version_id).first()
         if not package_version:
+            # Fallback: support passing Package.id by finding its active version
+            package_version = db.query(PackageVersion).filter(
+                PackageVersion.package_id == req.package_version_id,
+                PackageVersion.is_current == True
+            ).order_by(PackageVersion.version_number.desc()).first()
+        if not package_version:
             raise EntityNotFoundException("PackageVersion", req.package_version_id)
 
         # Idempotency check if key provided

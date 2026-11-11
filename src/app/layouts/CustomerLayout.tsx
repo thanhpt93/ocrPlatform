@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { Outlet, NavLink, useNavigate, useLocation, Link } from 'react-router-dom';
 import {
   LayoutDashboard,
   Store,
@@ -19,23 +19,38 @@ import {
   Sparkles,
   CheckCircle2,
   ExternalLink,
+  UserPlus,
+  LogIn,
+  LogOut,
 } from 'lucide-react';
 import { usePlatformStore } from '@/stores/usePlatformStore';
 import { cn } from '@/utils/cn';
 import { Modal } from '@/components/ui/modal';
+import { api } from '@/services/api/client';
 import { Button } from '@/components/ui/button';
 
 export const CustomerLayout: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { customers, activeCustomerId, setActiveCustomerId, searchQuery, setSearchQuery } = usePlatformStore();
+  const { customers, activeCustomerId, setActiveCustomerId, searchQuery, setSearchQuery, currentUser } = usePlatformStore();
 
   const [showOrgDropdown, setShowOrgDropdown] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [showNotificationModal, setShowNotificationModal] = useState(false);
 
-  const activeCustomer = customers.find((c) => c.id === activeCustomerId) || customers[0];
+  const effectiveCustomerId = currentUser?.id || activeCustomerId;
+  const activeCustomer = currentUser ? {
+    id: currentUser.id,
+    orgName: currentUser.company_name || currentUser.full_name || currentUser.email || 'My Organization',
+    tier: 'Standard',
+  } : (customers.find((c) => c.id === effectiveCustomerId) || customers[0] || {
+    id: 'demo',
+    orgName: 'My Organization',
+    tier: 'Standard',
+  });
+
+  const isAuthenticated = Boolean(api.getAccessToken());
 
   const navItems = [
     { label: 'Dashboard', path: '/app/dashboard', icon: LayoutDashboard },
@@ -91,24 +106,25 @@ export const CustomerLayout: React.FC = () => {
             {showOrgDropdown && (
               <div className="absolute top-full left-0 right-0 mt-1.5 bg-slate-800 rounded-lg shadow-xl border border-slate-700 py-1.5 z-50">
                 <div className="px-3 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                  Switch Organization
+                  Current Account
                 </div>
-                {customers.map((c) => (
-                  <button
-                    key={c.id}
-                    onClick={() => {
-                      setActiveCustomerId(c.id);
-                      setShowOrgDropdown(false);
-                    }}
-                    className={cn(
-                      'w-full flex items-center justify-between px-3 py-2 text-xs text-left hover:bg-slate-700 transition-colors',
-                      c.id === activeCustomerId ? 'text-blue-400 font-medium bg-slate-700/50' : 'text-slate-300'
-                    )}
-                  >
-                    <span className="truncate">{c.orgName}</span>
-                    {c.id === activeCustomerId && <CheckCircle2 className="h-3.5 w-3.5 text-blue-400 shrink-0" />}
-                  </button>
-                ))}
+                <div className="px-3 py-2 text-xs text-blue-400 font-medium bg-slate-700/50 flex items-center justify-between">
+                  <span className="truncate">{activeCustomer.orgName}</span>
+                  <CheckCircle2 className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+                </div>
+                {currentUser && (
+                  <div className="p-1.5 border-t border-slate-700">
+                    <button
+                      onClick={() => {
+                        setShowOrgDropdown(false);
+                        navigate('/register');
+                      }}
+                      className="w-full text-left px-2 py-1.5 text-xs text-slate-300 hover:text-white hover:bg-slate-700 rounded transition-colors"
+                    >
+                      + Register Another Account
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -148,6 +164,33 @@ export const CustomerLayout: React.FC = () => {
             );
           })}
         </nav>
+
+        {/* Auth Quick Links in Sidebar if not authenticated */}
+        {!isAuthenticated && (
+          <div className="p-3 mx-3 mb-2 rounded-lg bg-blue-950/40 border border-blue-800/60">
+            <p className="text-xs font-semibold text-blue-200 mb-1">Chưa đăng nhập?</p>
+            <p className="text-[11px] text-slate-400 mb-2">Đăng ký hoặc đăng nhập để quản lý giấy phép OCR của bạn.</p>
+            <div className="flex gap-2">
+              <Button
+                onClick={() => navigate('/login')}
+                variant="outline"
+                size="sm"
+                className="flex-1 text-[11px] h-7 bg-slate-800 border-slate-700 text-slate-200"
+              >
+                <LogIn className="h-3 w-3 mr-1" />
+                Đăng nhập
+              </Button>
+              <Button
+                onClick={() => navigate('/register')}
+                size="sm"
+                className="flex-1 text-[11px] h-7 bg-blue-600 hover:bg-blue-500 text-white"
+              >
+                <UserPlus className="h-3 w-3 mr-1" />
+                Đăng ký
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* Portal Switcher Footer Banner */}
         <div className="p-3 border-t border-slate-800 bg-slate-950/40">
@@ -215,56 +258,100 @@ export const CustomerLayout: React.FC = () => {
 
             <div className="h-5 w-px bg-slate-200 mx-1" />
 
-            {/* User Profile */}
-            <div className="relative">
-              <button
-                onClick={() => setShowProfileMenu(!showProfileMenu)}
-                className="flex items-center gap-2.5 p-1.5 pl-2 rounded-lg hover:bg-slate-100 transition-colors text-left"
-              >
-                <div className="h-8 w-8 rounded-full bg-blue-600 text-white font-semibold text-xs flex items-center justify-center ring-2 ring-blue-100 shadow-xs">
-                  AW
-                </div>
-                <div className="hidden sm:block text-left">
-                  <div className="text-xs font-semibold text-slate-800 leading-tight">Alexander Wright</div>
-                  <div className="text-[10px] text-slate-500 leading-tight">Billing & Tech Owner</div>
-                </div>
-                <ChevronDown className="h-3.5 w-3.5 text-slate-400 ml-1" />
-              </button>
+            {/* Top Bar Auth Buttons if unauthenticated */}
+            {!isAuthenticated ? (
+              <div className="flex items-center gap-2">
+                <Button
+                  onClick={() => navigate('/login')}
+                  variant="outline"
+                  size="sm"
+                  className="text-xs h-8 px-3 border-slate-300 text-slate-700 hover:bg-slate-100"
+                >
+                  <LogIn className="h-3.5 w-3.5 mr-1.5 text-slate-500" />
+                  Đăng nhập
+                </Button>
+                <Button
+                  onClick={() => navigate('/register')}
+                  size="sm"
+                  className="text-xs h-8 px-3 bg-blue-600 hover:bg-blue-700 text-white font-medium shadow-xs"
+                >
+                  <UserPlus className="h-3.5 w-3.5 mr-1.5" />
+                  Đăng ký tài khoản
+                </Button>
+              </div>
+            ) : (
+              /* User Profile Menu */
+              <div className="relative">
+                <button
+                  onClick={() => setShowProfileMenu(!showProfileMenu)}
+                  className="flex items-center gap-2.5 p-1.5 pl-2 rounded-lg hover:bg-slate-100 transition-colors text-left"
+                >
+                  <div className="h-8 w-8 rounded-full bg-blue-600 text-white font-semibold text-xs flex items-center justify-center ring-2 ring-blue-100 shadow-xs">
+                    {currentUser?.full_name ? currentUser.full_name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase() : 'CU'}
+                  </div>
+                  <div className="hidden sm:block text-left">
+                    <div className="text-xs font-semibold text-slate-800 leading-tight">{currentUser?.full_name || 'Customer Account'}</div>
+                    <div className="text-[10px] text-slate-500 leading-tight">{currentUser?.role || 'Customer'}</div>
+                  </div>
+                  <ChevronDown className="h-3.5 w-3.5 text-slate-400 ml-1" />
+                </button>
 
-              {showProfileMenu && (
-                <div className="absolute right-0 mt-2 w-56 rounded-xl bg-white shadow-xl border border-slate-200 py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100">
-                  <div className="px-4 py-2 border-b border-slate-100">
-                    <p className="text-xs font-bold text-slate-800">Alexander Wright</p>
-                    <p className="text-[11px] text-slate-500 truncate">alex.wright@fincorp-global.com</p>
+                {showProfileMenu && (
+                  <div className="absolute right-0 mt-2 w-56 rounded-xl bg-white shadow-xl border border-slate-200 py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100">
+                    <div className="px-4 py-2 border-b border-slate-100">
+                      <p className="text-xs font-bold text-slate-800">{currentUser?.full_name || 'Customer Account'}</p>
+                      <p className="text-[11px] text-slate-500 truncate">{currentUser?.email || 'customer@ocrplatform.io'}</p>
+                    </div>
+                    <div className="py-1">
+                      <NavLink
+                        to="/app/settings"
+                        onClick={() => setShowProfileMenu(false)}
+                        className="block px-4 py-2 text-xs text-slate-700 hover:bg-slate-50 transition-colors"
+                      >
+                        Organization Profile & Members
+                      </NavLink>
+                      <NavLink
+                        to="/app/billing"
+                        onClick={() => setShowProfileMenu(false)}
+                        className="block px-4 py-2 text-xs text-slate-700 hover:bg-slate-50 transition-colors"
+                      >
+                        Billing & Invoices
+                      </NavLink>
+                      <NavLink
+                        to="/register"
+                        onClick={() => setShowProfileMenu(false)}
+                        className="block px-4 py-2 text-xs text-blue-600 hover:bg-blue-50 font-medium transition-colors"
+                      >
+                        + Đăng ký tài khoản khác
+                      </NavLink>
+                      <button
+                        onClick={() => {
+                          setShowProfileMenu(false);
+                          navigate('/admin/dashboard');
+                        }}
+                        className="w-full text-left px-4 py-2 text-xs text-amber-600 hover:bg-amber-50 font-medium transition-colors"
+                      >
+                        Switch to Admin Portal
+                      </button>
+                      <div className="border-t border-slate-100 my-1" />
+                      <button
+                        onClick={() => {
+                          setShowProfileMenu(false);
+                          api.clearTokens();
+                          localStorage.removeItem('ocr_platform_state_v1');
+                          usePlatformStore.setState({ currentUser: null });
+                          navigate('/login');
+                        }}
+                        className="w-full text-left px-4 py-2 text-xs text-red-600 hover:bg-red-50 font-medium flex items-center gap-1.5 transition-colors"
+                      >
+                        <LogOut className="h-3.5 w-3.5" />
+                        Sign Out
+                      </button>
+                    </div>
                   </div>
-                  <div className="py-1">
-                    <NavLink
-                      to="/app/settings"
-                      onClick={() => setShowProfileMenu(false)}
-                      className="block px-4 py-2 text-xs text-slate-700 hover:bg-slate-50 transition-colors"
-                    >
-                      Organization Profile & Members
-                    </NavLink>
-                    <NavLink
-                      to="/app/billing"
-                      onClick={() => setShowProfileMenu(false)}
-                      className="block px-4 py-2 text-xs text-slate-700 hover:bg-slate-50 transition-colors"
-                    >
-                      Billing & Invoices
-                    </NavLink>
-                    <button
-                      onClick={() => {
-                        setShowProfileMenu(false);
-                        navigate('/admin/dashboard');
-                      }}
-                      className="w-full text-left px-4 py-2 text-xs text-blue-600 hover:bg-blue-50 font-medium transition-colors"
-                    >
-                      Switch to Admin Portal
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            )}
           </div>
         </header>
 
@@ -282,50 +369,45 @@ export const CustomerLayout: React.FC = () => {
         description="Real-time alerts, quota notifications, and license advisories"
       >
         <div className="space-y-3">
-          <div className="p-3.5 rounded-lg bg-amber-50 border border-amber-200/80 flex items-start gap-3">
-            <ShieldAlert className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
-            <div>
-              <p className="text-xs font-semibold text-amber-900">License Quota Alert: Identity OCR</p>
-              <p className="text-xs text-amber-700 mt-0.5">
-                License LIC-8921-A2 has reached 82% of its 5,000 document allocation. Consider renewing or upgrading soon.
-              </p>
-              <span className="text-[10px] text-amber-600 font-medium mt-1.5 block">2 hours ago</span>
-            </div>
-          </div>
           <div className="p-3.5 rounded-lg bg-blue-50 border border-blue-200/80 flex items-start gap-3">
-            <CheckCircle2 className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
+            <Sparkles className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
             <div>
-              <p className="text-xs font-semibold text-blue-900">Batch OCR Complete: 64 Invoices</p>
-              <p className="text-xs text-blue-700 mt-0.5">
-                Job JOB-99208 finished processing with an average confidence score of 99.4%.
+              <p className="text-xs font-semibold text-blue-900">Platform Active</p>
+              <p className="text-[11px] text-blue-700 mt-0.5">
+                All OCR microservice clusters and mock payment gateways are operational.
               </p>
-              <span className="text-[10px] text-blue-600 font-medium mt-1.5 block">5 hours ago</span>
             </div>
           </div>
         </div>
       </Modal>
 
-      {/* Help Modal */}
+      {/* Help & Support Modal */}
       <Modal
         isOpen={showHelpModal}
         onClose={() => setShowHelpModal(false)}
-        title="ocrPlatform Help & Documentation"
-        description="Quick guides to getting started with our OCR APIs and Marketplace"
+        title="Developer Guides & Support"
+        description="Quick references for integrating OCR services with your application"
       >
-        <div className="space-y-4 text-xs text-slate-600 leading-relaxed">
-          <div className="p-3 rounded-lg bg-slate-100 border border-slate-200">
-            <h4 className="font-semibold text-slate-800 mb-1">Quick Start Guide</h4>
-            <ol className="list-decimal pl-4 space-y-1">
-              <li>Browse the <strong>OCR Marketplace</strong> to find models tailored to your document types.</li>
-              <li>Select and subscribe to a Starter, Professional, or Enterprise package.</li>
-              <li>Retrieve your <strong>License Key</strong> from the <em>My Licenses</em> tab.</li>
-              <li>Include your License Key in your REST API headers: <code className="bg-slate-200 px-1 py-0.5 rounded text-[11px]">X-OCR-License-Key: YOUR_KEY</code></li>
-            </ol>
+        <div className="space-y-4">
+          <div className="p-4 rounded-lg bg-slate-900 text-slate-300 font-mono text-xs">
+            <p className="text-slate-400 mb-2"># Quick Start: Execute OCR with API Key</p>
+            <p className="text-emerald-400">curl -X POST https://api.ocrplatform.io/v1/ocr/execute \</p>
+            <p className="text-slate-300 pl-4">-H "X-OCR-API-KEY: YOUR_API_KEY" \</p>
+            <p className="text-slate-300 pl-4">-F "file=@document.pdf"</p>
           </div>
-          <p>
-            Need technical assistance or custom document model training? Contact our 24/7 dedicated enterprise support team at{' '}
-            <span className="text-blue-600 font-medium">support@ocrplatform.com</span>.
-          </p>
+          <div className="space-y-2">
+            <h4 className="text-xs font-semibold text-slate-800">Support Channels</h4>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="p-2.5 rounded-lg border border-slate-200">
+                <span className="font-medium text-slate-700 block">Documentation</span>
+                <span className="text-[11px] text-slate-500">docs.ocrplatform.io</span>
+              </div>
+              <div className="p-2.5 rounded-lg border border-slate-200">
+                <span className="font-medium text-slate-700 block">Technical Support</span>
+                <span className="text-[11px] text-slate-500">support@ocrplatform.io</span>
+              </div>
+            </div>
+          </div>
         </div>
       </Modal>
     </div>

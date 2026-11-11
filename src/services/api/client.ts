@@ -7,7 +7,7 @@ export interface ApiError {
 }
 
 class ApiClient {
-  private getAccessToken(): string | null {
+  public getAccessToken(): string | null {
     return localStorage.getItem('ocr_access_token');
   }
 
@@ -52,8 +52,7 @@ class ApiClient {
     });
 
     if (res.status === 401) {
-      // Auto-refresh attempt could be implemented here or clear session
-      // For now, if unauthorized, do not crash abruptly
+      this.clearTokens();
     }
 
     if (!res.ok) {
@@ -63,43 +62,52 @@ class ApiClient {
       } catch {
         errBody = { message: res.statusText || 'Unknown error' };
       }
-      const error: ApiError = {
-        message: errBody.detail?.message || errBody.detail || errBody.message || 'Request failed',
-        code: errBody.detail?.code || errBody.code,
+      const err: ApiError = {
+        message: errBody.detail || errBody.message || 'API request failed',
+        code: errBody.code,
         status: res.status,
       };
-      throw error;
+      throw err;
     }
 
+    // If 204 No Content
     if (res.status === 204) {
-      return null as any;
+      return {} as T;
     }
 
-    return res.json();
+    return await res.json();
   }
 
-  public get<T>(endpoint: string, headers?: HeadersInit): Promise<T> {
-    return this.request<T>(endpoint, { method: 'GET', headers });
+  public get<T>(endpoint: string, options?: RequestInit): Promise<T> {
+    return this.request<T>(endpoint, { ...options, method: 'GET' });
   }
 
-  public post<T>(endpoint: string, body?: any, headers?: HeadersInit): Promise<T> {
+  public post<T>(endpoint: string, body?: any, options?: RequestInit): Promise<T> {
     return this.request<T>(endpoint, {
+      ...options,
       method: 'POST',
-      body: body instanceof FormData ? body : JSON.stringify(body),
-      headers,
+      body: body instanceof FormData ? body : body !== undefined ? JSON.stringify(body) : undefined,
     });
   }
 
-  public put<T>(endpoint: string, body?: any, headers?: HeadersInit): Promise<T> {
+  public put<T>(endpoint: string, body?: any, options?: RequestInit): Promise<T> {
     return this.request<T>(endpoint, {
+      ...options,
       method: 'PUT',
-      body: body instanceof FormData ? body : JSON.stringify(body),
-      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   }
 
-  public delete<T>(endpoint: string, headers?: HeadersInit): Promise<T> {
-    return this.request<T>(endpoint, { method: 'DELETE', headers });
+  public patch<T>(endpoint: string, body?: any, options?: RequestInit): Promise<T> {
+    return this.request<T>(endpoint, {
+      ...options,
+      method: 'PATCH',
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  }
+
+  public delete<T>(endpoint: string, options?: RequestInit): Promise<T> {
+    return this.request<T>(endpoint, { ...options, method: 'DELETE' });
   }
 }
 

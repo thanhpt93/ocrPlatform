@@ -5,6 +5,10 @@ import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { CustomerLayout } from '@/app/layouts/CustomerLayout';
 import { AdminLayout } from '@/app/layouts/AdminLayout';
 
+// Auth Modules
+import { LoginPage } from '@/modules/auth/LoginPage';
+import { RegisterPage } from '@/modules/auth/RegisterPage';
+
 // Customer Portal Modules
 import { CustomerDashboard } from '@/modules/customer/dashboard/CustomerDashboard';
 import { MarketplacePage } from '@/modules/customer/marketplace/MarketplacePage';
@@ -28,10 +32,23 @@ import { AdminBillingPage } from '@/modules/admin/billing/AdminBillingPage';
 import { MonitoringPage } from '@/modules/admin/monitoring/MonitoringPage';
 import { SystemManagementPage } from '@/modules/admin/system/SystemManagementPage';
 
+const RootRedirect: React.FC = () => {
+  const token = localStorage.getItem('ocr_access_token');
+  return <Navigate to={token ? '/app/dashboard' : '/login'} replace />;
+};
+
 export const router = createBrowserRouter([
   {
     path: '/',
-    element: <Navigate to="/app/dashboard" replace />,
+    element: <RootRedirect />,
+  },
+  {
+    path: '/login',
+    element: <LoginPage />,
+  },
+  {
+    path: '/register',
+    element: <RegisterPage />,
   },
   // Customer Portal Routes
   {

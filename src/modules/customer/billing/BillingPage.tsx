@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   CreditCard,
   Download,
@@ -20,11 +20,16 @@ import { Order, Invoice, Payment } from '@/types';
 import { formatCurrency, formatDate } from '@/utils/formatters';
 
 export const BillingPage: React.FC = () => {
-  const { orders, invoices, payments, activeCustomerId } = usePlatformStore();
+  const { orders, invoices, payments, activeCustomerId, currentUser, syncWithBackend } = usePlatformStore();
 
-  const customerOrders = orders.filter((o) => o.customerId === activeCustomerId);
-  const customerInvoices = invoices.filter((i) => i.customerId === activeCustomerId);
-  const customerPayments = payments.filter((p) => p.customerId === activeCustomerId);
+  useEffect(() => {
+    syncWithBackend();
+  }, []);
+
+  const effectiveCustomerId = currentUser?.id || activeCustomerId;
+  const customerOrders = orders.filter((o) => o.customerId === effectiveCustomerId);
+  const customerInvoices = invoices.filter((i) => i.customerId === effectiveCustomerId);
+  const customerPayments = payments.filter((p) => p.customerId === effectiveCustomerId);
 
   const [activeTab, setActiveTab] = useState<string>('orders');
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
@@ -62,13 +67,13 @@ export const BillingPage: React.FC = () => {
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 font-semibold uppercase tracking-wider">
-                    <th className="py-3 px-4">Order ID</th>
-                    <th className="py-3 px-4">Service & Package</th>
+                    <th className="py-3 px-4">Order #</th>
+                    <th className="py-3 px-4">Purchased Service & Plan</th>
                     <th className="py-3 px-4">Date</th>
                     <th className="py-3 px-4">Amount</th>
                     <th className="py-3 px-4">Payment Method</th>
                     <th className="py-3 px-4">Status</th>
-                    <th className="py-3 px-4 text-right">Actions</th>
+                    <th className="py-3 px-4 text-right">Details</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -106,7 +111,7 @@ export const BillingPage: React.FC = () => {
                   ) : (
                     <tr>
                       <td colSpan={7} className="py-12 text-center text-slate-400">
-                        No orders recorded.
+                        Chưa có đơn hàng nào được ghi nhận cho tài khoản này.
                       </td>
                     </tr>
                   )}
@@ -128,7 +133,7 @@ export const BillingPage: React.FC = () => {
                     <th className="py-3 px-4">Invoice #</th>
                     <th className="py-3 px-4">Issue Date</th>
                     <th className="py-3 px-4">Due Date</th>
-                    <th className="py-3 px-4">Amount</th>
+                    <th className="py-3 px-4">Total Amount</th>
                     <th className="py-3 px-4">Status</th>
                     <th className="py-3 px-4 text-right">Actions</th>
                   </tr>
@@ -142,12 +147,10 @@ export const BillingPage: React.FC = () => {
                         <td className="py-3.5 px-4 text-slate-600">{formatDate(inv.dueDate)}</td>
                         <td className="py-3.5 px-4 font-bold text-slate-900">{formatCurrency(inv.amount)}</td>
                         <td className="py-3.5 px-4">
-                          {inv.status === 'paid' && <Badge variant="success">Paid</Badge>}
-                          {inv.status === 'unpaid' && <Badge variant="warning">Unpaid</Badge>}
-                          {inv.status === 'overdue' && <Badge variant="danger">Overdue</Badge>}
+                          <Badge variant="success">Paid</Badge>
                         </td>
                         <td className="py-3.5 px-4 text-right">
-                          <div className="flex items-center justify-end gap-1.5">
+                          <div className="flex items-center justify-end gap-2">
                             <Button
                               onClick={() => {
                                 setSelectedInvoice(inv);
@@ -157,15 +160,10 @@ export const BillingPage: React.FC = () => {
                               size="xs"
                             >
                               <Eye className="h-3 w-3 mr-1" />
-                              Inspect
+                              View
                             </Button>
-                            <Button
-                              onClick={() => alert(`Downloading PDF for invoice ${inv.invoiceNumber}...`)}
-                              variant="secondary"
-                              size="xs"
-                            >
-                              <Download className="h-3 w-3 mr-1" />
-                              PDF
+                            <Button variant="ghost" size="xs">
+                              <Download className="h-3.5 w-3.5" />
                             </Button>
                           </div>
                         </td>
@@ -174,7 +172,7 @@ export const BillingPage: React.FC = () => {
                   ) : (
                     <tr>
                       <td colSpan={6} className="py-12 text-center text-slate-400">
-                        No invoices generated.
+                        Chưa có hóa đơn nào cho tài khoản này.
                       </td>
                     </tr>
                   )}
@@ -193,23 +191,23 @@ export const BillingPage: React.FC = () => {
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 font-semibold uppercase tracking-wider">
-                    <th className="py-3 px-4">Payment #</th>
+                    <th className="py-3 px-4">Transaction ID</th>
                     <th className="py-3 px-4">Order Ref</th>
-                    <th className="py-3 px-4">Amount</th>
-                    <th className="py-3 px-4">Method</th>
                     <th className="py-3 px-4">Timestamp</th>
+                    <th className="py-3 px-4">Payment Method</th>
+                    <th className="py-3 px-4">Amount</th>
                     <th className="py-3 px-4 text-right">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {customerPayments.length > 0 ? (
-                    customerPayments.map((pay) => (
-                      <tr key={pay.id} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="py-3.5 px-4 font-mono font-medium text-slate-900">{pay.paymentNumber}</td>
-                        <td className="py-3.5 px-4 font-mono text-blue-600">{pay.orderNumber}</td>
-                        <td className="py-3.5 px-4 font-bold text-slate-900">{formatCurrency(pay.amount)}</td>
-                        <td className="py-3.5 px-4 text-slate-600">{pay.method}</td>
-                        <td className="py-3.5 px-4 text-slate-500 font-mono text-[11px]">{pay.date}</td>
+                    customerPayments.map((p) => (
+                      <tr key={p.id} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-3.5 px-4 font-mono font-medium text-slate-900">{p.id}</td>
+                        <td className="py-3.5 px-4 font-mono text-blue-600">{p.orderNumber || p.orderId}</td>
+                        <td className="py-3.5 px-4 text-slate-600">{p.date}</td>
+                        <td className="py-3.5 px-4 text-slate-600">{p.method}</td>
+                        <td className="py-3.5 px-4 font-bold text-slate-900">{formatCurrency(p.amount)}</td>
                         <td className="py-3.5 px-4 text-right">
                           <Badge variant="success">Successful</Badge>
                         </td>
@@ -218,7 +216,7 @@ export const BillingPage: React.FC = () => {
                   ) : (
                     <tr>
                       <td colSpan={6} className="py-12 text-center text-slate-400">
-                        No payment transactions recorded.
+                        Chưa có giao dịch thanh toán nào được ghi nhận cho tài khoản này.
                       </td>
                     </tr>
                   )}
@@ -230,90 +228,84 @@ export const BillingPage: React.FC = () => {
       )}
 
       {/* Order Detail Modal */}
-      {selectedOrder && (
-        <Modal
-          isOpen={isOrderDetailOpen}
-          onClose={() => setIsOrderDetailOpen(false)}
-          title={`Order Summary: ${selectedOrder.orderNumber}`}
-          description="Commercial receipt and subscription binding"
-        >
-          <div className="space-y-4 text-xs">
-            <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+      <Modal
+        isOpen={isOrderDetailOpen}
+        onClose={() => setIsOrderDetailOpen(false)}
+        title={`Order Details: ${selectedOrder?.orderNumber}`}
+        description="Authoritative order breakdown and package snapshot"
+      >
+        {selectedOrder && (
+          <div className="space-y-4">
+            <div className="p-3.5 bg-slate-50 rounded-xl space-y-2 text-xs">
               <div className="flex justify-between">
                 <span className="text-slate-500">Service:</span>
-                <span className="font-semibold text-slate-800">{selectedOrder.serviceName}</span>
+                <span className="font-semibold text-slate-900">{selectedOrder.serviceName}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Package:</span>
-                <span className="font-semibold text-slate-800">{selectedOrder.packageName}</span>
+                <span className="text-slate-500">Package Version:</span>
+                <span className="font-semibold text-slate-900">{selectedOrder.packageName}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Date:</span>
-                <span className="font-semibold text-slate-800">{formatDate(selectedOrder.date)}</span>
+                <span className="text-slate-500">Order Date:</span>
+                <span className="text-slate-700">{formatDate(selectedOrder.date)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Payment:</span>
-                <span className="font-semibold text-slate-800">{selectedOrder.paymentMethod}</span>
+                <span className="text-slate-500">Payment Channel:</span>
+                <span className="text-slate-700">{selectedOrder.paymentMethod}</span>
               </div>
-              <div className="pt-2 border-t border-slate-200 flex justify-between text-sm font-bold">
+              <div className="border-t border-slate-200 pt-2 flex justify-between font-bold text-sm">
                 <span>Total Amount:</span>
                 <span className="text-blue-600">{formatCurrency(selectedOrder.amount)}</span>
               </div>
             </div>
-
-            <div className="flex justify-end gap-3 pt-2">
-              <Button onClick={() => setIsOrderDetailOpen(false)} variant="primary" size="sm">
+            <div className="flex justify-end gap-2 pt-2">
+              <Button onClick={() => setIsOrderDetailOpen(false)} variant="outline" size="sm">
                 Close
               </Button>
             </div>
           </div>
-        </Modal>
-      )}
+        )}
+      </Modal>
 
       {/* Invoice Detail Modal */}
-      {selectedInvoice && (
-        <Modal
-          isOpen={isInvoiceDetailOpen}
-          onClose={() => setIsInvoiceDetailOpen(false)}
-          title={`Tax Invoice: ${selectedInvoice.invoiceNumber}`}
-          description={`Issued on ${formatDate(selectedInvoice.issueDate)}`}
-        >
-          <div className="space-y-4 text-xs">
-            <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+      <Modal
+        isOpen={isInvoiceDetailOpen}
+        onClose={() => setIsInvoiceDetailOpen(false)}
+        title={`Invoice: ${selectedInvoice?.invoiceNumber}`}
+        description="Formal digital tax receipt and payment confirmation"
+      >
+        {selectedInvoice && (
+          <div className="space-y-4">
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-2">
               <div className="flex justify-between">
-                <span className="text-slate-500">Billed To:</span>
-                <span className="font-semibold text-slate-800">{selectedInvoice.customerName}</span>
+                <span className="text-slate-500">Invoice Number:</span>
+                <span className="font-mono font-semibold">{selectedInvoice.invoiceNumber}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Bill To:</span>
+                <span className="font-semibold">{selectedInvoice.customerName}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Issue Date:</span>
-                <span className="font-semibold text-slate-800">{formatDate(selectedInvoice.issueDate)}</span>
+                <span>{formatDate(selectedInvoice.issueDate)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Payment Status:</span>
-                <span className="font-semibold text-emerald-600 uppercase">{selectedInvoice.status}</span>
+                <span className="text-slate-500">Status:</span>
+                <Badge variant="success">Paid</Badge>
               </div>
-              <div className="pt-2 border-t border-slate-200 flex justify-between text-sm font-bold">
-                <span>Total Invoiced:</span>
-                <span className="text-blue-600">{formatCurrency(selectedInvoice.amount)}</span>
+              <div className="border-t border-slate-200 pt-2 flex justify-between font-bold text-sm">
+                <span>Amount Paid:</span>
+                <span className="text-emerald-600">{formatCurrency(selectedInvoice.amount)}</span>
               </div>
             </div>
-
-            <div className="flex justify-between items-center pt-2">
-              <Button
-                onClick={() => alert(`Downloading PDF for ${selectedInvoice.invoiceNumber}`)}
-                variant="outline"
-                size="sm"
-              >
-                <Download className="h-3.5 w-3.5 mr-1" />
-                Download PDF
-              </Button>
-              <Button onClick={() => setIsInvoiceDetailOpen(false)} variant="primary" size="sm">
-                Done
+            <div className="flex justify-end gap-2 pt-2">
+              <Button onClick={() => setIsInvoiceDetailOpen(false)} variant="outline" size="sm">
+                Close
               </Button>
             </div>
           </div>
-        </Modal>
-      )}
+        )}
+      </Modal>
     </div>
   );
 };

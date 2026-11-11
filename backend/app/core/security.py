@@ -24,7 +24,8 @@ def create_access_token(subject: Union[str, Any], role: str, expires_delta: Opti
         "exp": expire,
         "sub": str(subject),
         "role": role,
-        "type": "access"
+        "type": "access",
+        "jti": secrets.token_hex(16)
     }
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt
@@ -38,7 +39,8 @@ def create_refresh_token(subject: Union[str, Any], expires_delta: Optional[timed
     to_encode = {
         "exp": expire,
         "sub": str(subject),
-        "type": "refresh"
+        "type": "refresh",
+        "jti": secrets.token_hex(16)
     }
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt

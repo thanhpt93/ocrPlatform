@@ -52,10 +52,10 @@ export const ServiceDetailPage: React.FC = () => {
     setIsCheckoutOpen(true);
   };
 
-  const handleConfirmCheckout = () => {
+  const handleConfirmCheckout = async () => {
     if (!selectedPackage) return;
     try {
-      const res = checkoutPackage({
+      const res = await checkoutPackage({
         packageId: selectedPackage.id,
         paymentMethod,
       });
