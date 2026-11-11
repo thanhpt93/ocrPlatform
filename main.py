@@ -41,7 +41,7 @@ if __name__ == "__main__":
         if env_port:
             port = int(env_port)
         else:
-            port = find_available_port(8000, 8001)
+            port = find_available_port(8001, 8000)
 
     print(f"Starting ocrPlatform FastAPI Backend on http://{args.host}:{port} ...")
     print(f"Interactive Swagger Documentation: http://{args.host}:{port}/api/v1/docs")

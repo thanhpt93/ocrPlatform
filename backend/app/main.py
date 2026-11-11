@@ -14,6 +14,7 @@ from app.modules.subscriptions.router import router as subscriptions_router
 from app.modules.licenses.router import router as licenses_router
 from app.modules.usage.router import router as usage_router
 from app.modules.admin.router import router as admin_router
+from app.modules.ocr_engine.router import router as ocr_engine_router
 
 # Create tables on startup if not present
 Base.metadata.create_all(bind=engine)
@@ -45,6 +46,7 @@ app.include_router(subscriptions_router, prefix=settings.API_V1_PREFIX)
 app.include_router(licenses_router, prefix=settings.API_V1_PREFIX)
 app.include_router(usage_router, prefix=settings.API_V1_PREFIX)
 app.include_router(admin_router, prefix=settings.API_V1_PREFIX)
+app.include_router(ocr_engine_router, prefix=settings.API_V1_PREFIX)
 
 @app.get("/health", tags=["Health"])
 @app.get(f"{settings.API_V1_PREFIX}/health", tags=["Health"])

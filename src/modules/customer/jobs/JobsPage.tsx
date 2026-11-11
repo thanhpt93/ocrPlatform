@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   FileText,
   Search,
@@ -23,14 +23,59 @@ import { OCRJob } from '@/types';
 import { formatNumber, formatDateTime } from '@/utils/formatters';
 
 export const JobsPage: React.FC = () => {
-  const { jobs, activeCustomerId, customers, services, docTypes, retryJob, submitNewJob, currentUser } = usePlatformStore();
+  const {
+    jobs,
+    activeCustomerId,
+    customers,
+    services,
+    docTypes,
+    licenses,
+    subscriptions,
+    retryJob,
+    submitNewJob,
+    currentUser,
+    syncWithBackend,
+  } = usePlatformStore();
+
+  useEffect(() => {
+    syncWithBackend();
+  }, []);
+
   const effectiveCustomerId = currentUser?.id || activeCustomerId;
-  const customer = currentUser ? {
-    id: currentUser.id,
-    orgName: currentUser.company_name || currentUser.full_name || currentUser.email || 'My Organization',
-  } : (customers.find((c) => c.id === effectiveCustomerId) || customers[0]);
+  const customer = currentUser
+    ? {
+        id: currentUser.id,
+        orgName: currentUser.company_name || currentUser.full_name || currentUser.email || 'My Organization',
+      }
+    : customers.find((c) => c.id === effectiveCustomerId) || customers[0];
 
   const customerJobs = jobs.filter((j) => j.customerId === effectiveCustomerId);
+
+  // Filter purchased services (from active licenses or active/expiring subscriptions)
+  const customerLicenses = licenses.filter(
+    (l) =>
+      (l.customerId === effectiveCustomerId || (!currentUser && l.customerId === activeCustomerId)) &&
+      l.status === 'active'
+  );
+  const customerSubscriptions = subscriptions.filter(
+    (s) => s.customerId === effectiveCustomerId && (s.status === 'active' || s.status === 'expiring')
+  );
+
+  const purchasedServiceIds = new Set<string>();
+  const purchasedServiceNames = new Set<string>();
+
+  customerLicenses.forEach((l) => {
+    if (l.serviceId) purchasedServiceIds.add(l.serviceId);
+    if (l.serviceName) purchasedServiceNames.add(l.serviceName.trim().toLowerCase());
+  });
+  customerSubscriptions.forEach((s) => {
+    if (s.serviceId) purchasedServiceIds.add(s.serviceId);
+    if (s.serviceName) purchasedServiceNames.add(s.serviceName.trim().toLowerCase());
+  });
+
+  const purchasedServices = services.filter(
+    (s) => purchasedServiceIds.has(s.id) || purchasedServiceNames.has(s.name.trim().toLowerCase())
+  );
 
   const [search, setSearch] = useState('');
   const [selectedService, setSelectedService] = useState('all');
@@ -39,10 +84,19 @@ export const JobsPage: React.FC = () => {
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
 
-  // New mock upload form state
+  // Upload form state - Only select from purchased services, no page count input needed
   const [fileName, setFileName] = useState('Corporate_Tax_Report_2026.pdf');
-  const [uploadServiceId, setUploadServiceId] = useState(services[0]?.id || '');
-  const [pageCount, setPageCount] = useState(3);
+  const [uploadServiceId, setUploadServiceId] = useState('');
+
+  useEffect(() => {
+    if (purchasedServices.length > 0) {
+      if (!uploadServiceId || !purchasedServices.some((s) => s.id === uploadServiceId)) {
+        setUploadServiceId(purchasedServices[0].id);
+      }
+    } else {
+      setUploadServiceId('');
+    }
+  }, [purchasedServices, uploadServiceId]);
 
   const filteredJobs = customerJobs.filter((job) => {
     const matchesSearch =
@@ -67,18 +121,20 @@ export const JobsPage: React.FC = () => {
 
   const handleMockUploadSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const srv = services.find((s) => s.id === uploadServiceId) || services[0];
+    const srv = purchasedServices.find((s) => s.id === uploadServiceId) || purchasedServices[0];
+    if (!srv) return;
+
     submitNewJob({
       customerId: customer.id,
       customerName: customer.orgName,
-      fileName,
+      fileName: fileName.trim() || 'Uploaded_Document.pdf',
       fileSize: '2.4 MB',
-      fileType: 'PDF',
-      serviceId: srv ? srv.id : 'srv-1',
-      serviceName: srv ? srv.name : 'OCR Service',
-      docTypeId: 'doc-1',
-      docTypeName: 'Standard VAT & Tax Invoice',
-      pageCount: Number(pageCount),
+      fileType: fileName.toLowerCase().endsWith('.png') || fileName.toLowerCase().endsWith('.jpg') ? 'IMAGE' : 'PDF',
+      serviceId: srv.id,
+      serviceName: srv.name,
+      docTypeId: srv.supportedDocTypeIds?.[0] || 'doc-1',
+      docTypeName: docTypes.find((d) => d.id === srv.supportedDocTypeIds?.[0])?.name || 'Standard OCR Document',
+      pageCount: 1, // Tự động xác định từ tài liệu tải lên, không yêu cầu người dùng cài đặt
       processingDurationMs: 1420,
       confidenceScore: 99.2,
       extractedDataPreview: {
@@ -89,6 +145,8 @@ export const JobsPage: React.FC = () => {
     });
     setIsUploadOpen(false);
   };
+
+  const filterServices = purchasedServices.length > 0 ? purchasedServices : services;
 
   return (
     <div className="space-y-6">
@@ -127,7 +185,7 @@ export const JobsPage: React.FC = () => {
               <Select
                 value={selectedService}
                 onChange={(e) => setSelectedService(e.target.value)}
-                options={[{ value: 'all', label: 'All Services' }, ...services.map((s) => ({ value: s.id, label: s.name }))]}
+                options={[{ value: 'all', label: 'All Services' }, ...filterServices.map((s) => ({ value: s.id, label: s.name }))]}
                 className="w-full md:w-48 text-xs py-1.5"
               />
               <Select
@@ -276,41 +334,72 @@ export const JobsPage: React.FC = () => {
       >
         <form onSubmit={handleMockUploadSubmit} className="space-y-4">
           <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">File Name</label>
+            <label className="block text-xs font-medium text-slate-700 mb-1">Document File</label>
+            <div className="border-2 border-dashed border-slate-200 hover:border-blue-400 rounded-lg p-4 text-center cursor-pointer transition-colors bg-slate-50 relative mb-2">
+              <input
+                type="file"
+                accept=".pdf,.png,.jpg,.jpeg,.tiff"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    setFileName(file.name);
+                  }
+                }}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              />
+              <UploadCloud className="h-6 w-6 text-slate-400 mx-auto mb-1.5" />
+              <p className="text-xs font-medium text-slate-700">
+                {fileName ? fileName : 'Click or drag file here to upload'}
+              </p>
+              <p className="text-[10px] text-slate-400 mt-0.5">Supports PDF, PNG, JPG, TIFF</p>
+            </div>
             <Input
               type="text"
               value={fileName}
               onChange={(e) => setFileName(e.target.value)}
+              placeholder="Or enter file name..."
               required
               className="text-xs"
             />
           </div>
+
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-1">OCR Model / Service</label>
-            <Select
-              value={uploadServiceId}
-              onChange={(e) => setUploadServiceId(e.target.value)}
-              options={services.map((s) => ({ value: s.id, label: `${s.name} (${s.code})` }))}
-              className="text-xs"
-            />
+            {purchasedServices.length === 0 ? (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-xs flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold">Chưa có dịch vụ OCR khả dụng</p>
+                  <p className="mt-0.5 text-slate-600">
+                    Bạn chưa có License hoặc Subscription đang hoạt động cho dịch vụ nào. Vui lòng mua gói cước hoặc kích hoạt License Key trước khi gửi tác vụ OCR.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <Select
+                  value={uploadServiceId}
+                  onChange={(e) => setUploadServiceId(e.target.value)}
+                  options={purchasedServices.map((s) => ({ value: s.id, label: `${s.name} (${s.code})` }))}
+                  className="text-xs"
+                />
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Chỉ hiển thị các dịch vụ OCR bạn đã mua và đang có bản quyền kích hoạt.
+                </p>
+              </div>
+            )}
           </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">Page Count</label>
-            <Input
-              type="number"
-              min={1}
-              max={50}
-              value={pageCount}
-              onChange={(e) => setPageCount(parseInt(e.target.value) || 1)}
-              required
-              className="text-xs"
-            />
-          </div>
+
           <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
             <Button onClick={() => setIsUploadOpen(false)} variant="outline" size="sm" type="button">
               Cancel
             </Button>
-            <Button variant="primary" size="sm" type="submit">
+            <Button
+              variant="primary"
+              size="sm"
+              type="submit"
+              disabled={purchasedServices.length === 0}
+            >
               Submit Job
             </Button>
           </div>
