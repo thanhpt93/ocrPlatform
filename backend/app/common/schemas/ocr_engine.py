@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any, Literal
+from typing import Optional, Dict, Any, List, Literal
 from pydantic import BaseModel, Field
 
 class IDCardData(BaseModel):
@@ -44,6 +44,15 @@ class DriverLicenseData(BaseModel):
     expiry_date: Optional[str] = Field(None, description="Ngày hết hạn (hoặc Vô thời hạn)")
     issue_place: Optional[str] = Field(None, description="Nơi cấp (Sở GTVT...)")
 
+class SegmentationMetadata(BaseModel):
+    detected: bool = True
+    method: str = "vlm_hybrid_bbox"
+    bbox: List[int] = Field(default_factory=list, description="[xmin, ymin, xmax, ymax] in pixels")
+    original_dimensions: str = Field("", description="WxH of original image")
+    cropped_dimensions: str = Field("", description="WxH of segmented ID card")
+    crop_area_ratio: float = Field(1.0, description="Ratio of cropped card area to original image area")
+    rotation_applied_deg: int = Field(0, description="Clockwise degrees rotated to make the ID card upright (0, 90, 180, 270)")
+
 class OCRExtractionResponse(BaseModel):
     job_id: str
     status: str = "completed"
@@ -55,6 +64,9 @@ class OCRExtractionResponse(BaseModel):
     confidence_score: float
     execution_time_ms: int
     extracted_data: Dict[str, Any]
+    original_image_url: Optional[str] = Field(None, description="Data URL of original uploaded image")
+    cropped_image_url: Optional[str] = Field(None, description="Data URL of segmented/cropped ID card image")
+    segmentation_info: Optional[SegmentationMetadata] = None
     quota_used: int = 1
     remaining_quota: int
     created_at: str

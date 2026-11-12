@@ -83,3 +83,11 @@ export const usageApi = {
   getSummary: () => api.get<any>('/usage/summary'),
   getHistory: () => api.get<any>('/usage/history'),
 };
+
+// OCR Engine VLM API
+export const ocrApi = {
+  processIdentity: (formData: FormData) =>
+    api.post<any>('/ocr/process-identity', formData),
+  getHealth: () =>
+    api.get<any>('/ocr/health'),
+};

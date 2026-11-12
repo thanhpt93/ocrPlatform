@@ -146,6 +146,16 @@ export interface License {
 
 export type JobStatus = 'completed' | 'processing' | 'queued' | 'failed';
 
+export interface SegmentationInfo {
+  detected: boolean;
+  method: string;
+  bbox: number[];
+  original_dimensions: string;
+  cropped_dimensions: string;
+  crop_area_ratio: number;
+  rotation_applied_deg?: number;
+}
+
 export interface OCRJob {
   id: string;
   customerId: string;
@@ -165,6 +175,9 @@ export interface OCRJob {
   confidenceScore?: number;
   errorReason?: string;
   extractedDataPreview?: Record<string, any>;
+  originalImageUrl?: string;
+  croppedImageUrl?: string;
+  segmentationInfo?: SegmentationInfo;
 }
 
 export interface Order {

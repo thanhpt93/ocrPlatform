@@ -1,6 +1,7 @@
 import io
 import json
 from unittest.mock import patch, MagicMock
+from PIL import Image, ImageDraw
 import pytest
 
 from app.common.models.licenses import License
@@ -9,18 +10,28 @@ from app.common.enums import LicenseStatus, QuotaType, LedgerEntryType
 
 SAMPLE_ID_CARD_JSON = {
     "document_type": "id_card",
-    "card_type": "cccd_chip",
+    "document_bbox": [150, 120, 850, 880],
+    "card_subtype": "CCCD gắn chip",
     "id_number": "001202012345",
     "full_name": "NGUYỄN VĂN AN",
     "date_of_birth": "1995-05-12",
     "gender": "Nam",
     "nationality": "Việt Nam",
-    "place_of_origin": "Hà Nội",
-    "place_of_residence": "Ba Đình, Hà Nội",
-    "date_of_expiry": "2035-05-12",
-    "date_of_issue": "2021-06-15",
-    "issuing_authority": "Cục Cảnh sát QLHC về TTXH"
+    "origin_address": "Hà Nội",
+    "residence_address": "Ba Đình, Hà Nội",
+    "expiry_date": "2035-05-12",
+    "issue_date": "2021-06-15",
+    "issue_place": "Cục Cảnh sát QLHC về TTXH"
 }
+
+def make_sample_id_with_background_bytes() -> bytes:
+    """Create a synthetic image with a dark wooden-like background and a bright ID card in the center."""
+    img = Image.new("RGB", (600, 400), color=(45, 35, 30))
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([72, 60, 528, 340], fill=(235, 242, 245), outline=(180, 190, 200), width=3)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=90)
+    return buf.getvalue()
 
 def mock_ollama_response(content_dict):
     mock_resp = MagicMock()
@@ -110,15 +121,15 @@ def test_ocr_process_with_jwt_and_quota_deduction(client, db, customer_one, cust
     assert balance.remaining_quota == 1000
     assert balance.used_quota == 0
 
-    # 2. Process identity document with mock VLM
-    fake_img = b"\xff\xd8\xff\xe0\x00\x10JFIF" + b"\x00" * 100
+    # 2. Process identity document with background segmentation & mock VLM
+    sample_img = make_sample_id_with_background_bytes()
     with patch("urllib.request.urlopen") as mock_url:
         mock_url.return_value.__enter__.return_value = mock_ollama_response(SAMPLE_ID_CARD_JSON)
 
         ocr_res = client.post(
             "/api/v1/ocr/process-identity",
             headers={"Authorization": f"Bearer {customer_one_token}"},
-            files={"file": ("cccd_chip.jpg", io.BytesIO(fake_img), "image/jpeg")},
+            files={"file": ("cccd_chip.jpg", io.BytesIO(sample_img), "image/jpeg")},
             data={"license_id": license_id}
         )
 
@@ -131,6 +142,13 @@ def test_ocr_process_with_jwt_and_quota_deduction(client, db, customer_one, cust
     assert data["remaining_quota"] == 999
     assert data["extracted_data"]["id_number"] == "001202012345"
     assert data["extracted_data"]["full_name"] == "NGUYỄN VĂN AN"
+    assert "document_bbox" not in data["extracted_data"]
+    assert data["original_image_url"].startswith("data:image/jpeg;base64,")
+    assert data["cropped_image_url"].startswith("data:image/jpeg;base64,")
+    assert data["segmentation_info"] is not None
+    assert data["segmentation_info"]["detected"] is True
+    assert data["segmentation_info"]["original_dimensions"] == "600x400"
+    assert data["segmentation_info"]["crop_area_ratio"] < 0.85
 
     # 3. Verify Database state
     db.refresh(balance)
@@ -181,14 +199,14 @@ def test_ocr_process_with_api_key_header(client, db, customer_one, customer_one_
     api_key = cred_res.json()["api_key"]
 
     # 3. Call OCR using X-API-Key header (no Bearer token)
-    fake_img = b"\xff\xd8\xff\xe0\x00\x10JFIF" + b"\x00" * 100
+    sample_img = make_sample_id_with_background_bytes()
     with patch("urllib.request.urlopen") as mock_url:
         mock_url.return_value.__enter__.return_value = mock_ollama_response(SAMPLE_ID_CARD_JSON)
 
         ocr_res = client.post(
             "/api/v1/ocr/process-identity",
             headers={"X-API-Key": api_key},
-            files={"file": ("passport_sample.jpg", io.BytesIO(fake_img), "image/jpeg")}
+            files={"file": ("passport_sample.jpg", io.BytesIO(sample_img), "image/jpeg")}
         )
 
     assert ocr_res.status_code == 200
@@ -222,11 +240,11 @@ def test_ocr_process_quota_exhausted(client, db, customer_one, customer_one_toke
     balance.used_quota = 1000
     db.commit()
 
-    fake_img = b"\xff\xd8\xff\xe0\x00\x10JFIF" + b"\x00" * 100
+    sample_img = make_sample_id_with_background_bytes()
     ocr_res = client.post(
         "/api/v1/ocr/process-identity",
         headers={"Authorization": f"Bearer {customer_one_token}"},
-        files={"file": ("driver_license.jpg", io.BytesIO(fake_img), "image/jpeg")},
+        files={"file": ("driver_license.jpg", io.BytesIO(sample_img), "image/jpeg")},
         data={"license_id": license_id}
     )
 

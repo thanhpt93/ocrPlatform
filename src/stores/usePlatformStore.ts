@@ -129,7 +129,7 @@ interface PlatformState {
 
   // Actions - OCR Jobs
   retryJob: (jobId: string) => void;
-  submitNewJob: (job: Omit<OCRJob, 'id' | 'submissionTime' | 'status'>) => void;
+  submitNewJob: (job: Omit<OCRJob, 'id' | 'submissionTime' | 'status'> & Partial<Pick<OCRJob, 'id' | 'submissionTime' | 'status'>>) => void;
 
   // Actions - System
   toggleWorkerStatus: (workerId: string) => void;
@@ -154,6 +154,16 @@ const saved = loadStoredState();
 const initialUser = api.getCurrentUser();
 const isRealCustomer = Boolean(initialUser && initialUser.id && !initialUser.id.startsWith('cust-'));
 
+const sanitizeJobs = (jobsList: any[]) => {
+  if (!Array.isArray(jobsList)) return [];
+  return jobsList.map((j) => {
+    if (j && j.status === 'processing' && j.extractedDataPreview) {
+      return { ...j, status: 'completed' };
+    }
+    return j;
+  });
+};
+
 export const usePlatformStore = create<PlatformState>((set, get) => ({
   services: saved?.services || initialServices,
   docTypes: saved?.docTypes || initialDocTypes,
@@ -161,7 +171,7 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
   customers: saved?.customers || initialCustomers,
   subscriptions: isRealCustomer ? (saved?.subscriptions?.filter((s: any) => s.customerId === initialUser.id) || []) : (saved?.subscriptions || initialSubscriptions),
   licenses: isRealCustomer ? (saved?.licenses?.filter((l: any) => l.customerId === initialUser.id) || []) : (saved?.licenses || initialLicenses),
-  jobs: isRealCustomer ? (saved?.jobs?.filter((j: any) => j.customerId === initialUser.id) || []) : (saved?.jobs || initialJobs),
+  jobs: isRealCustomer ? sanitizeJobs(saved?.jobs?.filter((j: any) => j.customerId === initialUser.id) || []) : sanitizeJobs(saved?.jobs || initialJobs),
   orders: isRealCustomer ? (saved?.orders?.filter((o: any) => o.customerId === initialUser.id) || []) : (saved?.orders || initialOrders),
   invoices: isRealCustomer ? (saved?.invoices?.filter((i: any) => i.customerId === initialUser.id) || []) : (saved?.invoices || initialInvoices),
   payments: isRealCustomer ? (saved?.payments?.filter((p: any) => p.customerId === initialUser.id) || []) : (saved?.payments || initialPayments),
@@ -390,7 +400,13 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
         }
       }
 
-      const userJobs = curUser ? get().jobs.filter((j) => j.customerId === curUser.id) : get().jobs;
+      const rawUserJobs = curUser ? get().jobs.filter((j) => j.customerId === curUser.id) : get().jobs;
+      const userJobs = rawUserJobs.map((j) => {
+        if (j.status === 'processing' && j.extractedDataPreview) {
+          return { ...j, status: 'completed' as const };
+        }
+        return j;
+      });
       const userInvoices = curUser ? get().invoices.filter((i) => i.customerId === curUser.id) : get().invoices;
       const userPayments = curUser ? get().payments.filter((p) => p.customerId === curUser.id) : get().payments;
 
@@ -1069,14 +1085,22 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
   },
 
   submitNewJob: (job) => {
+    const now = new Date();
     const newJob: OCRJob = {
+      id: job.id || `JOB-${Date.now().toString().slice(-6)}`,
+      submissionTime: job.submissionTime || now.toLocaleString(),
+      completionTime: job.status === 'completed' || !job.status ? now.toLocaleString() : undefined,
       ...job,
-      id: `JOB-${Date.now().toString().slice(-6)}`,
-      submissionTime: new Date().toLocaleString(),
-      status: 'processing',
+      status: job.status || 'completed',
     };
     set((state) => {
-      const next = { jobs: [newJob, ...state.jobs] };
+      const updatedExisting = state.jobs.map((j) => {
+        if (j.status === 'processing' && j.extractedDataPreview) {
+          return { ...j, status: 'completed' as const };
+        }
+        return j;
+      });
+      const next = { jobs: [newJob, ...updatedExisting] };
       persist({ ...state, ...next });
       return next;
     });
@@ -1128,27 +1152,38 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
 
 function persist(state: Partial<PlatformState>) {
   if (typeof window === 'undefined') return;
+  const buildPayload = (maxImageJobs: number) => ({
+    services: state.services,
+    docTypes: state.docTypes,
+    packages: state.packages,
+    customers: state.customers,
+    subscriptions: state.subscriptions,
+    licenses: state.licenses,
+    jobs: (state.jobs || []).map((j, idx) =>
+      idx < maxImageJobs ? j : { ...j, originalImageUrl: undefined, croppedImageUrl: undefined }
+    ),
+    orders: state.orders,
+    invoices: state.invoices,
+    payments: state.payments,
+    workers: state.workers,
+    queues: state.queues,
+    adminUsers: state.adminUsers,
+    auditLogs: state.auditLogs,
+    dailyStats: state.dailyStats,
+    activeCustomerId: state.activeCustomerId,
+  });
+
   try {
-    const toSave = {
-      services: state.services,
-      docTypes: state.docTypes,
-      packages: state.packages,
-      customers: state.customers,
-      subscriptions: state.subscriptions,
-      licenses: state.licenses,
-      jobs: state.jobs,
-      orders: state.orders,
-      invoices: state.invoices,
-      payments: state.payments,
-      workers: state.workers,
-      queues: state.queues,
-      adminUsers: state.adminUsers,
-      auditLogs: state.auditLogs,
-      dailyStats: state.dailyStats,
-      activeCustomerId: state.activeCustomerId,
-    };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(buildPayload(5)));
   } catch (e: any) {
-    console.error('Failed to save local state:', e);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(buildPayload(1)));
+    } catch (e2: any) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(buildPayload(0)));
+      } catch (e3: any) {
+        console.error('Failed to save local state:', e3);
+      }
+    }
   }
 }

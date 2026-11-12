@@ -62,9 +62,20 @@ class ApiClient {
       } catch {
         errBody = { message: res.statusText || 'Unknown error' };
       }
+
+      let rawMsg: any = errBody?.detail || errBody?.message || 'API request failed';
+      let msgStr = 'API request failed';
+      if (typeof rawMsg === 'string') {
+        msgStr = rawMsg;
+      } else if (Array.isArray(rawMsg)) {
+        msgStr = rawMsg.map((item: any) => item?.msg || JSON.stringify(item)).join('; ');
+      } else if (typeof rawMsg === 'object' && rawMsg !== null) {
+        msgStr = rawMsg.message || rawMsg.detail || JSON.stringify(rawMsg);
+      }
+
       const err: ApiError = {
-        message: errBody.detail || errBody.message || 'API request failed',
-        code: errBody.code,
+        message: String(msgStr),
+        code: errBody?.detail?.code || errBody?.code,
         status: res.status,
       };
       throw err;
