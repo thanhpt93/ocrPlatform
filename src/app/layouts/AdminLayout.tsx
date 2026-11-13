@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -11,22 +11,41 @@ import {
   Activity,
   Sliders,
   Search,
-  Bell,
   ArrowRightLeft,
   ChevronDown,
   ShieldCheck,
   Server,
-  Sparkles,
+  LogOut,
+  LogIn,
+  RefreshCw,
+  AlertCircle,
 } from 'lucide-react';
 import { usePlatformStore } from '@/stores/usePlatformStore';
+import { api } from '@/services/api/client';
 import { cn } from '@/utils/cn';
 import { Button } from '@/components/ui/button';
 
 export const AdminLayout: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { searchQuery, setSearchQuery } = usePlatformStore();
+  const {
+    searchQuery,
+    setSearchQuery,
+    currentUser,
+    adminMonitoring,
+    adminLoading,
+    adminError,
+    syncAdminData,
+  } = usePlatformStore();
   const [showAdminMenu, setShowAdminMenu] = useState(false);
+
+  const isAdminAuthenticated = Boolean(api.getAccessToken() && currentUser?.role === 'PLATFORM_ADMIN');
+
+  useEffect(() => {
+    if (isAdminAuthenticated) {
+      syncAdminData();
+    }
+  }, [isAdminAuthenticated, syncAdminData]);
 
   const navSections = [
     {
@@ -54,11 +73,79 @@ export const AdminLayout: React.FC = () => {
     {
       title: 'Infrastructure & Ops',
       items: [
-        { label: 'OCR Monitoring & Queues', path: '/admin/monitoring', icon: Activity },
+        { label: 'OCR Monitoring & Models', path: '/admin/monitoring', icon: Activity },
         { label: 'System Settings & Audit', path: '/admin/system', icon: Sliders },
       ],
     },
   ];
+
+  const handleSignOut = () => {
+    setShowAdminMenu(false);
+    api.clearTokens();
+    usePlatformStore.setState({
+      currentUser: null,
+      customers: [],
+      subscriptions: [],
+      licenses: [],
+      orders: [],
+      payments: [],
+      adminUsers: [],
+      auditLogs: [],
+      adminDashboard: null,
+      adminMonitoring: null,
+      adminSystemConfig: null,
+      adminUsageRecords: [],
+    });
+    navigate('/login');
+  };
+
+  if (!isAdminAuthenticated) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 font-sans">
+        <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center shadow-2xl space-y-4">
+          <div className="inline-flex h-12 w-12 rounded-xl bg-amber-500/20 text-amber-400 items-center justify-center mx-auto border border-amber-500/30">
+            <ShieldCheck className="h-6 w-6" />
+          </div>
+          <h1 className="text-xl font-bold text-white">Platform Admin Authentication Required</h1>
+          <p className="text-xs text-slate-400 leading-relaxed">
+            {currentUser
+              ? `Signed in as ${currentUser.email} (${currentUser.role}). Administrator privileges (PLATFORM_ADMIN) are required to view real platform telemetry and customer records.`
+              : 'Please sign in with your administrator account to access live platform metrics, real registered customers, and license controls.'}
+          </p>
+          <div className="flex gap-3 pt-2">
+            {currentUser && (
+              <Button
+                onClick={() => navigate('/app/dashboard')}
+                variant="outline"
+                size="sm"
+                className="flex-1 bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700"
+              >
+                Customer Portal
+              </Button>
+            )}
+            <Button
+              onClick={() => navigate('/login')}
+              variant="primary"
+              size="sm"
+              className="flex-1 bg-amber-600 hover:bg-amber-500 text-white"
+            >
+              <LogIn className="h-4 w-4 mr-1.5" />
+              Sign In as Admin
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const adminName = currentUser?.full_name || currentUser?.email || 'Platform Admin';
+  const adminInitials = adminName
+    .split(' ')
+    .map((part: string) => part[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+  const ollamaRunning = adminMonitoring?.ollama_status === 'running';
 
   return (
     <div className="flex h-screen w-full bg-slate-50 overflow-hidden font-sans">
@@ -81,16 +168,27 @@ export const AdminLayout: React.FC = () => {
           </div>
         </div>
 
-        {/* System Health Status Indicator */}
-        <div className="px-4 py-2.5 bg-slate-900/80 border-b border-slate-800/80 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+        {/* Live Runtime Status Indicator */}
+        <div className="px-4 py-2.5 bg-slate-900/80 border-b border-slate-800/80 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="relative flex h-2 w-2 shrink-0">
+              {ollamaRunning && (
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              )}
+              <span
+                className={cn(
+                  'relative inline-flex rounded-full h-2 w-2',
+                  ollamaRunning ? 'bg-emerald-500' : 'bg-rose-500'
+                )}
+              />
             </span>
-            <span className="text-[11px] font-medium text-slate-300">Cluster Status: Healthy</span>
+            <span className="text-[11px] font-medium text-slate-300 truncate">
+              VLM: {ollamaRunning ? 'Ollama Online' : 'Ollama Offline'}
+            </span>
           </div>
-          <span className="text-[10px] text-slate-400 font-mono">5 Workers</span>
+          <span className="text-[10px] text-slate-400 font-mono truncate max-w-[92px]" title={adminMonitoring?.active_model || ''}>
+            {adminMonitoring?.installed_models ? `${adminMonitoring.installed_models.length} models` : '...'}
+          </span>
         </div>
 
         {/* Navigation Sections */}
@@ -164,9 +262,22 @@ export const AdminLayout: React.FC = () => {
 
           {/* Right Top Actions */}
           <div className="flex items-center gap-3">
+            <Button
+              onClick={() => syncAdminData()}
+              variant="outline"
+              size="xs"
+              disabled={adminLoading}
+              title="Refresh live data from backend"
+            >
+              <RefreshCw className={cn('h-3.5 w-3.5 mr-1', adminLoading && 'animate-spin')} />
+              {adminLoading ? 'Syncing...' : 'Sync Live Data'}
+            </Button>
+
             <div className="hidden md:flex items-center gap-2 px-2.5 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-semibold">
               <Server className="h-3.5 w-3.5 text-amber-600" />
-              Production Control Plane
+              {adminMonitoring?.database_dialect
+                ? `DB: ${adminMonitoring.database_dialect.toUpperCase()}`
+                : 'Live Backend'}
             </div>
 
             <div className="h-5 w-px bg-slate-200 mx-1" />
@@ -178,20 +289,20 @@ export const AdminLayout: React.FC = () => {
                 className="flex items-center gap-2.5 p-1.5 pl-2 rounded-lg hover:bg-slate-100 transition-colors text-left"
               >
                 <div className="h-8 w-8 rounded-full bg-amber-600 text-white font-semibold text-xs flex items-center justify-center ring-2 ring-amber-100 shadow-xs">
-                  CN
+                  {adminInitials}
                 </div>
                 <div className="hidden sm:block text-left">
-                  <div className="text-xs font-semibold text-slate-800 leading-tight">Christopher Nolan</div>
-                  <div className="text-[10px] text-amber-600 font-bold leading-tight">Super Administrator</div>
+                  <div className="text-xs font-semibold text-slate-800 leading-tight">{adminName}</div>
+                  <div className="text-[10px] text-amber-600 font-bold leading-tight">{currentUser?.role}</div>
                 </div>
                 <ChevronDown className="h-3.5 w-3.5 text-slate-400 ml-1" />
               </button>
 
               {showAdminMenu && (
-                <div className="absolute right-0 mt-2 w-56 rounded-xl bg-white shadow-xl border border-slate-200 py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100">
+                <div className="absolute right-0 mt-2 w-60 rounded-xl bg-white shadow-xl border border-slate-200 py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100">
                   <div className="px-4 py-2 border-b border-slate-100">
-                    <p className="text-xs font-bold text-slate-800">Christopher Nolan</p>
-                    <p className="text-[11px] text-slate-500 truncate">admin.chris@ocrplatform.internal</p>
+                    <p className="text-xs font-bold text-slate-800">{adminName}</p>
+                    <p className="text-[11px] text-slate-500 truncate">{currentUser?.email}</p>
                   </div>
                   <div className="py-1">
                     <NavLink
@@ -208,7 +319,15 @@ export const AdminLayout: React.FC = () => {
                       }}
                       className="w-full text-left px-4 py-2 text-xs text-blue-600 hover:bg-blue-50 font-medium transition-colors"
                     >
-                      Return to Customer Portal
+                      Switch to Customer Portal
+                    </button>
+                    <div className="border-t border-slate-100 my-1" />
+                    <button
+                      onClick={handleSignOut}
+                      className="w-full text-left px-4 py-2 text-xs text-red-600 hover:bg-red-50 font-medium flex items-center gap-1.5 transition-colors"
+                    >
+                      <LogOut className="h-3.5 w-3.5" />
+                      Sign Out
                     </button>
                   </div>
                 </div>
@@ -219,6 +338,12 @@ export const AdminLayout: React.FC = () => {
 
         {/* Scrollable Admin Workspace */}
         <main className="flex-1 overflow-y-auto p-6 md:p-8 bg-slate-50/80">
+          {adminError && (
+            <div className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />
+              <span>{adminError}</span>
+            </div>
+          )}
           <Outlet />
         </main>
       </div>

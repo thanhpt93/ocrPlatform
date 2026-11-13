@@ -53,7 +53,7 @@ export const DocumentTypeManagementPage: React.FC = () => {
     setDescription('');
     setCategory('Financial');
     setExampleImage('https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=300&q=80');
-    setSupportedServiceIds([services[0]?.id || 'srv-1']);
+    setSupportedServiceIds(services[0]?.id ? [services[0].id] : []);
     setStatus('active');
     setIsModalOpen(true);
   };
@@ -70,7 +70,7 @@ export const DocumentTypeManagementPage: React.FC = () => {
     setIsModalOpen(true);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const payload = {
       code,
@@ -83,9 +83,9 @@ export const DocumentTypeManagementPage: React.FC = () => {
     };
 
     if (editingDocType) {
-      updateDocType(editingDocType.id, payload);
+      await updateDocType(editingDocType.id, payload);
     } else {
-      addDocType(payload);
+      await addDocType(payload);
     }
     setIsModalOpen(false);
   };

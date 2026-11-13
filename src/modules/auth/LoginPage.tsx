@@ -5,7 +5,6 @@ import { authApi } from '@/services/api/endpoints';
 import { api } from '@/services/api/client';
 import { usePlatformStore } from '@/stores/usePlatformStore';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/form-controls';
 
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
@@ -22,7 +21,6 @@ export const LoginPage: React.FC = () => {
 
     try {
       const res = await authApi.login({ email, password });
-      // Clear old cached mock state
       localStorage.removeItem('ocr_platform_state_v1');
 
       api.setTokens(res.access_token, res.refresh_token, {
@@ -34,6 +32,8 @@ export const LoginPage: React.FC = () => {
       usePlatformStore.setState({
         currentUser: api.getCurrentUser(),
         activeCustomerId: res.user_id,
+        activePortal: res.role === 'PLATFORM_ADMIN' ? 'admin' : 'customer',
+        customers: [],
         subscriptions: [],
         licenses: [],
         orders: [],
@@ -41,9 +41,17 @@ export const LoginPage: React.FC = () => {
         invoices: [],
         payments: [],
         dailyStats: [],
+        adminDashboard: null,
+        adminMonitoring: null,
+        auditLogs: [],
+        adminUsers: [],
       });
       await syncWithBackend();
-      navigate('/app/dashboard');
+      if (res.role === 'PLATFORM_ADMIN') {
+        navigate('/admin/dashboard');
+      } else {
+        navigate('/app/dashboard');
+      }
     } catch (err: any) {
       setError(err?.message || 'Login failed. Please verify your credentials.');
     } finally {
@@ -61,7 +69,7 @@ export const LoginPage: React.FC = () => {
           ocr<span className="text-blue-400">Platform</span>
         </h2>
         <p className="mt-2 text-xs text-slate-400">
-          Sign in to your customer account to access OCR microservices & API licenses
+          Sign in to your account to access OCR microservices, API licenses & platform controls
         </p>
       </div>
 
@@ -86,7 +94,7 @@ export const LoginPage: React.FC = () => {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="alex@techcorp.io"
+                  placeholder="name@company.com"
                   className="w-full bg-slate-900/80 border border-slate-700 text-white rounded-lg pl-9 pr-3 py-2 text-xs focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 placeholder-slate-500"
                 />
               </div>

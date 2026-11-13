@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any, List, Literal
+from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field
 
 class IDCardData(BaseModel):
@@ -46,12 +46,15 @@ class DriverLicenseData(BaseModel):
 
 class SegmentationMetadata(BaseModel):
     detected: bool = True
-    method: str = "vlm_hybrid_bbox"
+    method: str = "cv_background_contrast"
     bbox: List[int] = Field(default_factory=list, description="[xmin, ymin, xmax, ymax] in pixels")
     original_dimensions: str = Field("", description="WxH of original image")
     cropped_dimensions: str = Field("", description="WxH of segmented ID card")
     crop_area_ratio: float = Field(1.0, description="Ratio of cropped card area to original image area")
     rotation_applied_deg: int = Field(0, description="Clockwise degrees rotated to make the ID card upright (0, 90, 180, 270)")
+    pipeline_mode: str = Field("hybrid", description="OCR pipeline mode used (hybrid, hybrid_paddle_vl, or vlm)")
+    ocr_lines_count: int = Field(0, description="Number of text lines recognized by VietOCR or PaddleOCR-VL in hybrid mode")
+    stage_timings_ms: Dict[str, float] = Field(default_factory=dict, description="Per-stage latency breakdown in ms")
 
 class OCRExtractionResponse(BaseModel):
     job_id: str
@@ -71,7 +74,24 @@ class OCRExtractionResponse(BaseModel):
     remaining_quota: int
     created_at: str
 
+class VLMModelOption(BaseModel):
+    name: str
+    label: str
+    vram_estimate: str
+    tier: str
+    mode: str = "hybrid"
+    installed: bool = False
+
 class VLMHealthResponse(BaseModel):
     ollama_status: str
     active_model: str
+    pipeline_mode: str = "hybrid"
+    hybrid_llm_model: str = "qwen2.5:3b"
+    paddleocr_vl_model: str = "paddleocr-vl-vi"
+    paddleocr_vl_ready: bool = False
+    vietocr_ready: bool = True
+    rapidocr_ready: bool = True
     gpu_accelerated: bool
+    ollama_base_url: str = "http://localhost:11434"
+    installed_models: List[str] = Field(default_factory=list)
+    available_models: List[VLMModelOption] = Field(default_factory=list)

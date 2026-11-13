@@ -31,13 +31,13 @@ export const PackageManagementPage: React.FC = () => {
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
   const [tier, setTier] = useState<PackageTier>('Professional');
-  const [serviceId, setServiceId] = useState(services[0]?.id || 'srv-1');
+  const [serviceId, setServiceId] = useState(services[0]?.id || '');
   const [price, setPrice] = useState(199);
   const [currency, setCurrency] = useState<'USD' | 'VND'>('USD');
   const [quotaType, setQuotaType] = useState<QuotaType>('Page');
   const [quotaAmount, setQuotaAmount] = useState(10000);
   const [duration, setDuration] = useState<Duration>('monthly');
-  const [billingType, setBillingType] = useState<BillingType>('prepaid');
+  const [billingType, setBillingType] = useState<BillingType>('one_time');
   const [apiAccess, setApiAccess] = useState(true);
   const [batchProcessing, setBatchProcessing] = useState(true);
   const [priorityProcessing, setPriorityProcessing] = useState(false);
@@ -62,13 +62,13 @@ export const PackageManagementPage: React.FC = () => {
     setCode(`PKG-${Math.random().toString(36).substring(2, 6).toUpperCase()}`);
     setName('Professional Plan');
     setTier('Professional');
-    setServiceId(services[0]?.id || 'srv-1');
+    setServiceId(services[0]?.id || '');
     setPrice(199);
     setCurrency('USD');
     setQuotaType('Page');
     setQuotaAmount(10000);
     setDuration('monthly');
-    setBillingType('prepaid');
+    setBillingType('one_time');
     setApiAccess(true);
     setBatchProcessing(true);
     setPriorityProcessing(true);
@@ -101,7 +101,7 @@ export const PackageManagementPage: React.FC = () => {
     setIsModalOpen(true);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const service = services.find((s) => s.id === serviceId);
 
@@ -127,9 +127,9 @@ export const PackageManagementPage: React.FC = () => {
     };
 
     if (editingPackage) {
-      updatePackage(editingPackage.id, payload);
+      await updatePackage(editingPackage.id, payload);
     } else {
-      addPackage(payload);
+      await addPackage(payload);
     }
     setIsModalOpen(false);
   };
@@ -342,8 +342,8 @@ export const PackageManagementPage: React.FC = () => {
               value={billingType}
               onChange={(e) => setBillingType(e.target.value as BillingType)}
             >
-              <option value="prepaid">Prepaid (Billed upfront)</option>
-              <option value="postpaid">Postpaid (Invoice at month-end)</option>
+              <option value="one_time">One-Time / Prepaid</option>
+              <option value="recurring">Recurring Subscription</option>
             </Select>
             <Select
               label="Overage Policy"

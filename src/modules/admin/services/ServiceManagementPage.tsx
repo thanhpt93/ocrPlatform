@@ -29,6 +29,8 @@ export const ServiceManagementPage: React.FC = () => {
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingService, setEditingService] = useState<OCRService | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Form State
   const [code, setCode] = useState('');
@@ -57,6 +59,7 @@ export const ServiceManagementPage: React.FC = () => {
 
   const handleOpenCreate = () => {
     setEditingService(null);
+    setSubmitError(null);
     setCode(`OCR-${Math.random().toString(36).substring(2, 6).toUpperCase()}`);
     setName('');
     setCategory('Financial');
@@ -65,7 +68,7 @@ export const ServiceManagementPage: React.FC = () => {
     setSupportedFileFormats('PDF, PNG, JPG');
     setSupportedLanguages('English, Vietnamese');
     setCapabilities('Text Detection, Layout Analysis');
-    setSupportedDocTypeIds(['doc-1']);
+    setSupportedDocTypeIds(docTypes[0]?.id ? [docTypes[0].id] : []);
     setProcessingMode('synchronous');
     setDisplayOrder(services.length + 1);
     setStatus('published');
@@ -76,6 +79,7 @@ export const ServiceManagementPage: React.FC = () => {
 
   const handleOpenEdit = (srv: OCRService) => {
     setEditingService(srv);
+    setSubmitError(null);
     setCode(srv.code);
     setName(srv.name);
     setCategory(srv.category);
@@ -93,17 +97,19 @@ export const ServiceManagementPage: React.FC = () => {
     setIsModalOpen(true);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitting(true);
+    setSubmitError(null);
     const servicePayload = {
       code,
       name,
       category,
       description,
       thumbnail,
-      supportedFileFormats: supportedFileFormats.split(',').map((f) => f.trim()),
-      supportedLanguages: supportedLanguages.split(',').map((l) => l.trim()),
-      capabilities: capabilities.split(',').map((c) => c.trim()),
+      supportedFileFormats: supportedFileFormats.split(',').map((f) => f.trim()).filter(Boolean),
+      supportedLanguages: supportedLanguages.split(',').map((l) => l.trim()).filter(Boolean),
+      capabilities: capabilities.split(',').map((c) => c.trim()).filter(Boolean),
       supportedDocTypeIds,
       processingMode,
       displayOrder: Number(displayOrder),
@@ -112,12 +118,18 @@ export const ServiceManagementPage: React.FC = () => {
       sla,
     };
 
-    if (editingService) {
-      updateService(editingService.id, servicePayload);
-    } else {
-      addService(servicePayload);
+    try {
+      if (editingService) {
+        await updateService(editingService.id, servicePayload);
+      } else {
+        await addService(servicePayload);
+      }
+      setIsModalOpen(false);
+    } catch (err: any) {
+      setSubmitError(err?.message || 'Failed to save service');
+    } finally {
+      setSubmitting(false);
     }
-    setIsModalOpen(false);
   };
 
   const toggleDocTypeSelection = (id: string) => {
@@ -220,9 +232,9 @@ export const ServiceManagementPage: React.FC = () => {
                           <Edit2 className="h-3 w-3 mr-1" /> Edit
                         </Button>
                         <Button
-                          onClick={() => {
+                          onClick={async () => {
                             if (confirm(`Are you sure you want to delete ${srv.name}?`)) {
-                              deleteService(srv.id);
+                              await deleteService(srv.id);
                             }
                           }}
                           variant="ghost"
@@ -250,6 +262,11 @@ export const ServiceManagementPage: React.FC = () => {
         maxWidth="2xl"
       >
         <form onSubmit={handleSubmit} className="space-y-4">
+          {submitError && (
+            <div className="p-2.5 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
+              {submitError}
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <Input
               label="Service Code"
@@ -365,8 +382,8 @@ export const ServiceManagementPage: React.FC = () => {
             <Button type="button" onClick={() => setIsModalOpen(false)} variant="outline" size="sm">
               Cancel
             </Button>
-            <Button type="submit" variant="primary" size="sm" className="bg-amber-600 hover:bg-amber-700">
-              {editingService ? 'Save Changes' : 'Create Service'}
+            <Button type="submit" disabled={submitting} variant="primary" size="sm" className="bg-amber-600 hover:bg-amber-700">
+              {submitting ? 'Saving...' : editingService ? 'Save Changes' : 'Create Service'}
             </Button>
           </div>
         </form>

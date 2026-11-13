@@ -205,10 +205,17 @@ class CatalogService:
             status=req.status
         )
         db.add(dt)
+        db.flush()
+
+        if req.supported_service_ids:
+            for srv_id in req.supported_service_ids:
+                if db.query(OCRService).filter(OCRService.id == srv_id).first():
+                    db.add(ServiceDocumentType(service_id=srv_id, document_type_id=dt.id))
+
         db.commit()
         db.refresh(dt)
         res = DocumentTypeResponse.model_validate(dt)
-        res.supported_service_ids = []
+        res.supported_service_ids = [rel.service_id for rel in dt.service_associations]
         return res
 
     @staticmethod
@@ -218,6 +225,13 @@ class CatalogService:
             raise EntityNotFoundException("Document Type", doc_type_id)
 
         update_data = req.model_dump(exclude_unset=True)
+        if "supported_service_ids" in update_data:
+            new_service_ids = update_data.pop("supported_service_ids") or []
+            db.query(ServiceDocumentType).filter(ServiceDocumentType.document_type_id == dt.id).delete()
+            for srv_id in new_service_ids:
+                if db.query(OCRService).filter(OCRService.id == srv_id).first():
+                    db.add(ServiceDocumentType(service_id=srv_id, document_type_id=dt.id))
+
         for key, val in update_data.items():
             setattr(dt, key, val)
 
@@ -227,3 +241,19 @@ class CatalogService:
         res = DocumentTypeResponse.model_validate(dt)
         res.supported_service_ids = service_ids
         return res
+
+    @staticmethod
+    def admin_delete_service(db: Session, service_id: str):
+        service = db.query(OCRService).filter(OCRService.id == service_id).first()
+        if not service:
+            raise EntityNotFoundException("OCR Service", service_id)
+        db.delete(service)
+        db.commit()
+
+    @staticmethod
+    def admin_delete_document_type(db: Session, doc_type_id: str):
+        dt = db.query(DocumentType).filter(DocumentType.id == doc_type_id).first()
+        if not dt:
+            raise EntityNotFoundException("Document Type", doc_type_id)
+        db.delete(dt)
+        db.commit()

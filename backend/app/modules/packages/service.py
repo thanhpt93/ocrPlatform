@@ -2,6 +2,9 @@ from typing import List
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from app.common.models.packages import Package, PackageVersion, CreditRate
+from app.common.models.orders import Order, OrderItem
+from app.common.models.subscriptions import Subscription
+from app.common.models.licenses import License
 from app.common.schemas.packages import (
     PackageCreate, PackageUpdate, PackageResponse, PackageVersionCreate,
     PackageVersionResponse, CreditRateResponse
@@ -162,3 +165,28 @@ class PackageService:
     def get_credit_rates(db: Session) -> List[CreditRateResponse]:
         rates = db.query(CreditRate).all()
         return [CreditRateResponse.model_validate(r) for r in rates]
+
+    @staticmethod
+    def delete_package(db: Session, package_id: str) -> dict:
+        pkg = db.query(Package).filter(or_(Package.id == package_id, Package.code == package_id)).first()
+        if not pkg:
+            raise EntityNotFoundException("Package", package_id)
+
+        version_ids = [v.id for v in pkg.versions]
+        has_refs = False
+        if version_ids:
+            has_refs = bool(
+                db.query(Order).filter(Order.package_version_id.in_(version_ids)).first()
+                or db.query(OrderItem).filter(OrderItem.package_version_id.in_(version_ids)).first()
+                or db.query(Subscription).filter(Subscription.package_version_id.in_(version_ids)).first()
+                or db.query(License).filter(License.package_version_id.in_(version_ids)).first()
+            )
+
+        if has_refs:
+            pkg.status = "archived"
+            db.commit()
+            return {"deleted": False, "archived": True, "id": pkg.id}
+
+        db.delete(pkg)
+        db.commit()
+        return {"deleted": True, "archived": False, "id": package_id}

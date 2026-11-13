@@ -2,6 +2,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, UploadFile, File, Form, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.dependencies import security_scheme
 from app.core.security import decode_token, hash_secret
@@ -12,6 +13,7 @@ from app.common.schemas.ocr_engine import OCRExtractionResponse, VLMHealthRespon
 from app.modules.ocr_engine.service import OCREngineService
 
 router = APIRouter(prefix="/ocr", tags=["OCR Engine"])
+
 
 def get_auth_context(
     credentials = Depends(security_scheme),
@@ -50,20 +52,43 @@ def get_auth_context(
         detail="Yêu cầu xác thực: Vui lòng đăng nhập (Bearer JWT) hoặc cung cấp Header 'X-API-Key'"
     )
 
+
 @router.get("/health", response_model=VLMHealthResponse)
 def check_vlm_health():
     is_up, status_str = OCREngineService.check_ollama_health()
+    installed_models = OCREngineService.get_installed_models() if is_up else []
+    available_models = OCREngineService.build_available_models(installed_models)
+    det_ready, vietocr_ready = OCREngineService.check_hybrid_components_ready()
+    paddleocr_vl_model = getattr(settings, "PADDLEOCR_VL_MODEL", "paddleocr-vl-vi")
+    paddleocr_vl_ready = OCREngineService.check_paddleocr_vl_ready(installed_models)
+    pipeline_mode = getattr(settings, "OCR_PIPELINE_MODE", "hybrid")
+    hybrid_llm_model = getattr(settings, "OLLAMA_TEXT_MODEL", "qwen2.5:3b")
+    active_model = hybrid_llm_model if pipeline_mode in ("hybrid", "hybrid_paddle_vl") else settings.OLLAMA_MODEL
     return VLMHealthResponse(
         ollama_status=status_str,
-        active_model="qwen2.5vl:7b",
-        gpu_accelerated=True
+        active_model=active_model,
+        pipeline_mode=pipeline_mode,
+        hybrid_llm_model=hybrid_llm_model,
+        paddleocr_vl_model=paddleocr_vl_model,
+        paddleocr_vl_ready=paddleocr_vl_ready,
+        vietocr_ready=vietocr_ready,
+        rapidocr_ready=det_ready,
+        gpu_accelerated=True,
+        ollama_base_url=settings.OLLAMA_BASE_URL,
+        installed_models=installed_models,
+        available_models=available_models,
     )
+
 
 @router.post("/process-identity", response_model=OCRExtractionResponse)
 async def process_identity_document(
     file: UploadFile = File(..., description="File ảnh tài liệu (PNG, JPG, JPEG, WEBP)"),
     license_id: Optional[str] = Form(None, description="Mã License cụ thể (tùy chọn)"),
-    model_name: Optional[str] = Form("qwen2.5vl:7b", description="Tên mô hình VLM"),
+    model_name: Optional[str] = Form(None, description="Tên mô hình LLM/VLM (tùy chọn)"),
+    pipeline_mode: Optional[str] = Form(
+        None,
+        description="Chế độ pipeline: 'hybrid' (DocAligner+VietOCR+LLM), 'hybrid_paddle_vl' (DocAligner+PaddleOCR-VL-Vi+LLM), hoặc 'vlm'"
+    ),
     auth_ctx = Depends(get_auth_context),
     db: Session = Depends(get_db)
 ):
@@ -92,5 +117,6 @@ async def process_identity_document(
         user=user,
         license_id=license_id,
         api_key_secret_hash=api_key_hash,
-        model_name=model_name or "qwen2.5vl:7b"
+        model_name=model_name,
+        pipeline_mode=pipeline_mode,
     )

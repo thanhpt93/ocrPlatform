@@ -1,6 +1,7 @@
 from datetime import datetime, timezone, timedelta
 from sqlalchemy.orm import Session
 from app.common.models.users import User, UserProfile, RefreshToken
+from app.common.models.audit import AuditLog
 from app.common.schemas.auth import UserRegisterRequest, UserLoginRequest, TokenResponse, RefreshTokenRequest
 from app.common.enums import UserRole, UserStatus
 from app.core.security import verify_password, get_password_hash, create_access_token, create_refresh_token, decode_token, hash_secret
@@ -40,6 +41,15 @@ class AuthService:
             expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
         )
         db.add(refresh_token)
+        db.add(AuditLog(
+            actor_id=user.id,
+            actor_email=user.email,
+            action="CUSTOMER_REGISTERED",
+            resource_type="customer",
+            resource_id=user.id,
+            details=f"Registered customer account {user.full_name} ({user.email})",
+            severity="info",
+        ))
         db.commit()
 
         return TokenResponse(
@@ -69,6 +79,16 @@ class AuthService:
             expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
         )
         db.add(refresh_token)
+        if user.role == UserRole.PLATFORM_ADMIN:
+            db.add(AuditLog(
+                actor_id=user.id,
+                actor_email=user.email,
+                action="ADMIN_LOGIN",
+                resource_type="session",
+                resource_id=user.id,
+                details=f"Platform administrator {user.email} signed in",
+                severity="info",
+            ))
         db.commit()
 
         return TokenResponse(

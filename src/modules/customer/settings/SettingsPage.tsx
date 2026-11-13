@@ -1,14 +1,9 @@
 import React, { useState } from 'react';
 import {
-  Building2,
-  Users,
-  Key,
-  Shield,
   Plus,
   Copy,
   Check,
   Trash2,
-  AlertCircle,
   Save,
   CheckCircle2,
 } from 'lucide-react';
@@ -22,22 +17,43 @@ import { Input, Select, Textarea } from '@/components/ui/form-controls';
 import { Modal } from '@/components/ui/modal';
 
 export const SettingsPage: React.FC = () => {
-  const { customers, activeCustomerId, updateCustomer, addCustomerMember, currentUser } = usePlatformStore();
+  const { customers, activeCustomerId, updateCustomer, currentUser } = usePlatformStore();
   const effectiveCustomerId = currentUser?.id || activeCustomerId;
-  const customer = currentUser ? {
-    id: currentUser.id,
-    orgName: currentUser.company_name || currentUser.full_name || currentUser.email || 'My Organization',
-    email: currentUser.email || '',
-    phone: currentUser.phone || '',
-    address: '',
-    taxId: '',
-    tier: 'Standard',
-    status: 'active',
-    memberCount: 1,
-    members: [
-      { id: currentUser.id, name: currentUser.full_name || 'Owner', email: currentUser.email, role: 'Owner' as const, status: 'active' as const, addedDate: new Date().toISOString().split('T')[0] },
-    ],
-  } : (customers.find((c) => c.id === effectiveCustomerId) || customers[0]);
+  const fallbackCustomer = customers.find((c) => c.id === effectiveCustomerId) || customers[0];
+  const customer = currentUser
+    ? {
+        id: currentUser.id,
+        orgName: currentUser.company_name || currentUser.full_name || currentUser.email || 'My Organization',
+        email: currentUser.email || '',
+        phone: currentUser.phone || '',
+        address: '',
+        taxId: '',
+        tier: 'Standard',
+        status: 'active',
+        memberCount: 1,
+        members: [
+          {
+            id: currentUser.id,
+            name: currentUser.full_name || 'Owner',
+            email: currentUser.email,
+            role: 'Owner' as const,
+            status: 'active' as const,
+            addedDate: new Date().toISOString().split('T')[0],
+          },
+        ],
+      }
+    : fallbackCustomer || {
+        id: '',
+        orgName: '',
+        email: '',
+        phone: '',
+        address: '',
+        taxId: '',
+        tier: 'Standard',
+        status: 'active',
+        memberCount: 0,
+        members: [],
+      };
 
   const [activeTab, setActiveTab] = useState<string>('profile');
 
@@ -54,16 +70,10 @@ export const SettingsPage: React.FC = () => {
   const [memberName, setMemberName] = useState('');
   const [memberEmail, setMemberEmail] = useState('');
   const [memberRole, setMemberRole] = useState<'Admin' | 'Developer' | 'Viewer'>('Developer');
+  const [members, setMembers] = useState(customer.members || []);
 
   // API Credentials state
-  const [apiKeys, setApiKeys] = useState(
-    currentUser
-      ? []
-      : [
-          { id: 'key-prod-1', name: 'Production Backend Ingestion', token: 'live_sec_99a8b11c098df2410a82', created: '2026-01-01', lastUsed: '5 mins ago' },
-          { id: 'key-dev-1', name: 'Staging Integration Sandbox', token: 'test_sec_7718aa00192bc9940121', created: '2026-02-14', lastUsed: 'Yesterday' },
-        ]
-  );
+  const [apiKeys, setApiKeys] = useState<Array<{ id: string; name: string; token: string; created: string; lastUsed: string }>>([]);
   const [copiedKeyId, setCopiedKeyId] = useState<string | null>(null);
 
   // Security settings state
@@ -72,31 +82,44 @@ export const SettingsPage: React.FC = () => {
 
   const tabs = [
     { id: 'profile', label: 'Organization Profile' },
-    { id: 'members', label: 'Member Management', count: customer.members?.length || 1 },
+    { id: 'members', label: 'Member Management', count: members.length },
     { id: 'api', label: 'API Credentials', count: apiKeys.length },
     { id: 'security', label: 'Security & Compliance' },
   ];
 
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
-    updateCustomer(customer.id, {
-      orgName,
-      email,
-      phone,
-      address,
-      taxId,
-    });
+    if (customer.id) {
+      updateCustomer(customer.id, {
+        orgName,
+        email,
+        phone,
+        address,
+        taxId,
+      });
+    }
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 3000);
   };
 
   const handleInviteSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    addCustomerMember(customer.id, {
+    const newMember = {
+      id: `mem-${Date.now()}`,
       name: memberName,
       email: memberEmail,
       role: memberRole,
-    });
+      status: 'invited' as const,
+      addedDate: new Date().toISOString().split('T')[0],
+    };
+    const nextMembers = [...members, newMember];
+    setMembers(nextMembers);
+    if (customer.id) {
+      updateCustomer(customer.id, {
+        members: nextMembers,
+        memberCount: nextMembers.length,
+      });
+    }
     setMemberName('');
     setMemberEmail('');
     setIsInviteOpen(false);
@@ -234,7 +257,7 @@ export const SettingsPage: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {customer.members?.map((m) => (
+                  {members.map((m) => (
                     <tr key={m.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="py-3.5 px-4 font-semibold text-slate-800">{m.name}</td>
                       <td className="py-3.5 px-4 text-slate-600">{m.email}</td>

@@ -12,7 +12,7 @@ class DocumentTypeBase(BaseModel):
     status: str = "active"
 
 class DocumentTypeCreate(DocumentTypeBase):
-    pass
+    supported_service_ids: Optional[List[str]] = None
 
 class DocumentTypeUpdate(BaseModel):
     name: Optional[str] = None
@@ -20,6 +20,7 @@ class DocumentTypeUpdate(BaseModel):
     category: Optional[DocTypeCategory] = None
     example_image: Optional[str] = None
     status: Optional[str] = None
+    supported_service_ids: Optional[List[str]] = None
 
 class DocumentTypeResponse(DocumentTypeBase):
     id: str

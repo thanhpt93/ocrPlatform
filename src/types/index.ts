@@ -38,11 +38,13 @@ export interface DocumentType {
 export type QuotaType = 'Page' | 'Document' | 'Credit';
 export type PackageTier = 'Starter' | 'Professional' | 'Enterprise' | 'Custom';
 export type Duration = 'monthly' | 'yearly' | 'pay_as_you_go';
-export type BillingType = 'prepaid' | 'postpaid';
+export type BillingType = 'one_time' | 'recurring' | 'prepaid' | 'postpaid';
 export type OveragePolicy = 'block' | 'charge_per_unit' | 'grace_period';
 
 export interface Package {
   id: string;
+  currentVersionId?: string;
+  versionNumber?: number;
   code: string;
   name: string;
   tier: PackageTier;
@@ -64,7 +66,7 @@ export interface Package {
   recommended?: boolean;
 }
 
-export type CustomerTier = 'Standard' | 'Premium' | 'Enterprise';
+export type CustomerTier = 'Standard' | 'Starter' | 'Professional' | 'Premium' | 'Enterprise' | 'Custom';
 export type CustomerStatus = 'active' | 'suspended' | 'pending';
 
 export interface CustomerMember {
@@ -79,6 +81,7 @@ export interface CustomerMember {
 export interface Customer {
   id: string;
   orgName: string;
+  fullName?: string;
   email: string;
   phone: string;
   address?: string;
@@ -91,15 +94,17 @@ export interface Customer {
   activeSubscriptionsCount: number;
   activeLicensesCount: number;
   totalUsagePages: number;
+  totalSpend?: number;
   monthlySpend: number;
 }
 
-export type SubscriptionStatus = 'active' | 'expiring' | 'expired' | 'cancelled';
+export type SubscriptionStatus = 'active' | 'pending' | 'expiring' | 'expired' | 'cancelled' | 'suspended';
 
 export interface Subscription {
   id: string;
   customerId: string;
   customerName: string;
+  customerEmail?: string;
   serviceId: string;
   serviceName: string;
   packageId: string;
@@ -112,7 +117,8 @@ export interface Subscription {
   remainingQuota: number;
   status: SubscriptionStatus;
   price: number;
-  billingCycle: 'monthly' | 'yearly';
+  currency?: string;
+  billingCycle: string;
 }
 
 export type LicenseStatus = 'pending' | 'active' | 'suspended' | 'expired' | 'revoked';
@@ -131,6 +137,7 @@ export interface License {
   maskedKey: string;
   customerId: string;
   customerName: string;
+  customerEmail?: string;
   serviceId: string;
   serviceName: string;
   packageId: string;
@@ -138,6 +145,7 @@ export interface License {
   subscriptionId?: string;
   quota: number;
   usedQuota: number;
+  remainingQuota?: number;
   startDate: string;
   expirationDate: string;
   status: LicenseStatus;
@@ -154,6 +162,9 @@ export interface SegmentationInfo {
   cropped_dimensions: string;
   crop_area_ratio: number;
   rotation_applied_deg?: number;
+  pipeline_mode?: string;
+  ocr_lines_count?: number;
+  stage_timings_ms?: Record<string, number>;
 }
 
 export interface OCRJob {
@@ -185,12 +196,13 @@ export interface Order {
   orderNumber: string;
   customerId: string;
   customerName: string;
+  customerEmail?: string;
   serviceName: string;
   packageName: string;
   amount: number;
   currency: 'USD' | 'VND';
   date: string;
-  status: 'completed' | 'pending' | 'failed' | 'refunded';
+  status: 'completed' | 'pending' | 'failed' | 'cancelled' | 'refunded';
   paymentMethod: string;
   invoiceId?: string;
 }
@@ -217,11 +229,14 @@ export interface Payment {
   orderNumber: string;
   customerId: string;
   customerName: string;
+  customerEmail?: string;
   amount: number;
   currency: 'USD' | 'VND';
   method: string;
   date: string;
-  status: 'successful' | 'processing' | 'failed';
+  status: 'successful' | 'pending' | 'processing' | 'failed';
+  transactionReference?: string;
+  failureReason?: string;
 }
 
 export interface WorkerNode {
@@ -251,8 +266,9 @@ export interface AdminUser {
   id: string;
   name: string;
   email: string;
-  role: 'Super Admin' | 'Service Manager' | 'Operations' | 'Support Specialist';
-  status: 'active' | 'inactive';
+  role: string;
+  status: 'active' | 'suspended' | 'pending' | 'inactive';
+  createdAt?: string;
   lastLogin: string;
 }
 
@@ -275,4 +291,90 @@ export interface DailyUsageStat {
   jobs: number;
   failed: number;
   avgDurationMs: number;
+}
+
+export interface AdminDashboardStats {
+  total_customers: number;
+  active_services: number;
+  total_services: number;
+  active_subscriptions: number;
+  active_licenses: number;
+  total_usage_units: number;
+  total_ocr_jobs: number;
+  total_revenue: number;
+  monthly_revenue: Array<{
+    month: string;
+    revenue: number;
+    orders: number;
+    volume: number;
+  }>;
+  service_popularity: Array<{
+    service_id: string;
+    name: string;
+    subscriptions: number;
+    usage_units: number;
+    percentage: number;
+  }>;
+  daily_usage: Array<{
+    date: string;
+    units: number;
+    jobs: number;
+  }>;
+  customer_growth: Array<{
+    month: string;
+    total: number;
+    new_customers: number;
+  }>;
+}
+
+export interface AdminUsageRecord {
+  id: string;
+  job_id?: string | null;
+  user_id: string;
+  customer_name: string;
+  customer_email: string;
+  license_id: string;
+  masked_key?: string | null;
+  service_id: string;
+  service_name?: string | null;
+  amount: number;
+  quota_type: string;
+  unit_cost: number;
+  created_at: string;
+}
+
+export interface AdminLoadedModel {
+  name?: string;
+  model?: string;
+  size?: number;
+  size_vram?: number;
+  expires_at?: string;
+}
+
+export interface AdminMonitoring {
+  backend_status: string;
+  database_status: string;
+  database_dialect: string;
+  ollama_status: string;
+  ollama_base_url: string;
+  active_model: string;
+  installed_models: string[];
+  loaded_models: AdminLoadedModel[];
+  total_jobs_processed: number;
+  jobs_last_24h: number;
+  active_licenses: number;
+  active_api_credentials: number;
+  recent_jobs: AdminUsageRecord[];
+}
+
+export interface AdminSystemConfig {
+  ollama_base_url: string;
+  ollama_model: string;
+  ollama_num_ctx: number;
+  ollama_num_predict: number;
+  ollama_timeout_seconds: number;
+  vlm_max_image_dimension: number;
+  database_backend: string;
+  access_token_expire_minutes: number;
+  refresh_token_expire_days: number;
 }

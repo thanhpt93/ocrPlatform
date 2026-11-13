@@ -129,8 +129,60 @@ export const JobsPage: React.FC = () => {
   const [fileName, setFileName] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadServiceId, setUploadServiceId] = useState('');
+  const [selectedPipelineMode, setSelectedPipelineMode] = useState<'hybrid' | 'hybrid_paddle_vl' | 'vlm'>('hybrid');
+  const [selectedModel, setSelectedModel] = useState<string>('qwen2.5:3b');
+  const [vlmHealth, setVlmHealth] = useState<{
+    ollama_status: string;
+    active_model: string;
+    pipeline_mode?: string;
+    hybrid_llm_model?: string;
+    paddleocr_vl_model?: string;
+    paddleocr_vl_ready?: boolean;
+    vietocr_ready?: boolean;
+    rapidocr_ready?: boolean;
+    installed_models?: string[];
+    available_models?: Array<{
+      name: string;
+      label: string;
+      vram_estimate: string;
+      tier: string;
+      mode?: string;
+      installed: boolean;
+    }>;
+  } | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    ocrApi.getHealth()
+      .then((res) => {
+        if (cancelled || !res) return;
+        setVlmHealth(res);
+        const mode: 'hybrid' | 'hybrid_paddle_vl' | 'vlm' =
+          res.pipeline_mode === 'vlm'
+            ? 'vlm'
+            : res.pipeline_mode === 'hybrid_paddle_vl'
+            ? 'hybrid_paddle_vl'
+            : 'hybrid';
+        setSelectedPipelineMode(mode);
+        const installed = Array.isArray(res.installed_models) ? res.installed_models : [];
+        const preferred = mode === 'vlm' ? res.active_model : (res.hybrid_llm_model || res.active_model);
+        const filterMode = mode === 'vlm' ? 'vlm' : 'hybrid';
+        if (preferred && (installed.length === 0 || installed.includes(preferred))) {
+          setSelectedModel(preferred);
+        } else if (res.available_models?.length) {
+          const match = res.available_models.find(
+            (m: any) => m.installed && (m.mode === filterMode || m.mode === 'both')
+          );
+          if (match) setSelectedModel(match.name);
+        }
+      })
+      .catch(() => {
+        // Keep default fallback model list if backend health endpoint is unreachable
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (purchasedServices.length > 0) {
@@ -186,6 +238,10 @@ export const JobsPage: React.FC = () => {
         const matchingLic = realLicenses.find((l) => l.serviceId === srv.id) || realLicenses[0];
         if (matchingLic) {
           formData.append('license_id', matchingLic.id);
+        }
+        formData.append('pipeline_mode', selectedPipelineMode);
+        if (selectedModel) {
+          formData.append('model_name', selectedModel);
         }
 
         const res = await ocrApi.processIdentity(formData);
@@ -638,7 +694,30 @@ export const JobsPage: React.FC = () => {
                       </span>
                       <span className="font-mono text-[10px] text-slate-500">
                         Method: {selectedJob.segmentationInfo.method}
+                        {selectedJob.segmentationInfo.pipeline_mode ? ` • ${selectedJob.segmentationInfo.pipeline_mode.toUpperCase()}` : ''}
                       </span>
+                      {selectedJob.segmentationInfo.stage_timings_ms && Object.keys(selectedJob.segmentationInfo.stage_timings_ms).length > 0 && (
+                        <div className="w-full pt-1 border-t border-blue-100/80 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] font-mono text-slate-600">
+                          {selectedJob.segmentationInfo.stage_timings_ms.docaligner_ms !== undefined && (
+                            <span>DocAligner: {Math.round(selectedJob.segmentationInfo.stage_timings_ms.docaligner_ms)}ms</span>
+                          )}
+                          {selectedJob.segmentationInfo.stage_timings_ms.text_det_ms !== undefined && (
+                            <span>TextDet: {Math.round(selectedJob.segmentationInfo.stage_timings_ms.text_det_ms)}ms</span>
+                          )}
+                          {selectedJob.segmentationInfo.stage_timings_ms.vietocr_ms !== undefined && (
+                            <span>VietOCR ({selectedJob.segmentationInfo.ocr_lines_count || 0} dòng): {Math.round(selectedJob.segmentationInfo.stage_timings_ms.vietocr_ms)}ms</span>
+                          )}
+                          {selectedJob.segmentationInfo.stage_timings_ms.paddleocr_vl_ms !== undefined && (
+                            <span>PaddleOCR-VL ({selectedJob.segmentationInfo.ocr_lines_count || 0} dòng): {Math.round(selectedJob.segmentationInfo.stage_timings_ms.paddleocr_vl_ms)}ms</span>
+                          )}
+                          {selectedJob.segmentationInfo.stage_timings_ms.llm_map_ms !== undefined && (
+                            <span>LLM Map: {Math.round(selectedJob.segmentationInfo.stage_timings_ms.llm_map_ms)}ms</span>
+                          )}
+                          {selectedJob.segmentationInfo.stage_timings_ms.vlm_ms !== undefined && (
+                            <span>VLM: {Math.round(selectedJob.segmentationInfo.stage_timings_ms.vlm_ms)}ms</span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -654,7 +733,7 @@ export const JobsPage: React.FC = () => {
                     3. Kết quả bóc tách thông tin OCR (Extracted Identity Fields)
                   </span>
                 </div>
-                <Badge variant="success" size="sm">Qwen2.5-VL Extracted</Badge>
+                <Badge variant="success" size="sm">VLM Extracted</Badge>
               </div>
 
               {selectedJob.extractedDataPreview && typeof selectedJob.extractedDataPreview === 'object' && (
@@ -719,7 +798,7 @@ export const JobsPage: React.FC = () => {
         isOpen={isUploadOpen}
         onClose={() => { if (!isProcessing) setIsUploadOpen(false); }}
         title="Execute OCR Job"
-        description="Submit a document to test ID Segmentation & OCR pipeline extraction with Qwen2.5-VL 7B"
+        description="CV tự động cắt nền & xoay thẳng thẻ ID trước khi gửi sang VLM trích xuất dữ liệu"
       >
         <form onSubmit={handleUploadSubmit} className="space-y-4">
           {!isAuthenticated && (
@@ -781,7 +860,7 @@ export const JobsPage: React.FC = () => {
             <label className="block text-xs font-medium text-slate-700 mb-1">OCR Model / Service</label>
             {purchasedServices.length === 0 ? (
               <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-xs flex items-start gap-2">
-                <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5\" />
+                <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
                 <div>
                   <p className="font-semibold">Chưa có dịch vụ OCR khả dụng</p>
                   <p className="mt-0.5 text-slate-600">
@@ -805,10 +884,104 @@ export const JobsPage: React.FC = () => {
             )}
           </div>
 
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-1">OCR Pipeline Mode</label>
+            <Select
+              value={selectedPipelineMode}
+              disabled={isProcessing}
+              onChange={(e) => {
+                const val = e.target.value;
+                const nextMode: 'hybrid' | 'hybrid_paddle_vl' | 'vlm' =
+                  val === 'vlm' ? 'vlm' : val === 'hybrid_paddle_vl' ? 'hybrid_paddle_vl' : 'hybrid';
+                setSelectedPipelineMode(nextMode);
+                const modelTargetMode = nextMode === 'vlm' ? 'vlm' : 'hybrid';
+                const candidates = (vlmHealth?.available_models || []).filter(
+                  (m) => m.mode === modelTargetMode || m.mode === 'both'
+                );
+                const best = candidates.find((m) => m.installed) || candidates[0];
+                if (best) {
+                  setSelectedModel(best.name);
+                } else {
+                  setSelectedModel(nextMode === 'vlm' ? 'qwen2.5vl:3b' : 'qwen2.5:3b');
+                }
+              }}
+              options={[
+                { value: 'hybrid', label: 'Hybrid (VietOCR CPU): DocAligner + TextDet + VietOCR + Text LLM' },
+                { value: 'hybrid_paddle_vl', label: 'Hybrid (PaddleOCR-VL 1.6 Vi GPU): Đọc CMND cũ & ảnh mờ tốt hơn' },
+                { value: 'vlm', label: 'Pure VLM: DocAligner + Qwen-VL đọc ảnh trực tiếp (~33s)' },
+              ]}
+              className="text-xs"
+            />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-medium text-slate-700">
+                {selectedPipelineMode === 'vlm' ? 'VLM Model (Ollama)' : 'Text LLM Model (JSON Mapper - Ollama)'}
+              </label>
+              {vlmHealth && (
+                <span className={`text-[10px] font-medium ${vlmHealth.ollama_status === 'running' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                  Ollama: {vlmHealth.ollama_status === 'running' ? 'Online' : 'Offline'}
+                  {selectedPipelineMode === 'hybrid' && vlmHealth.vietocr_ready !== undefined && (
+                    <> • VietOCR: {vlmHealth.vietocr_ready && vlmHealth.rapidocr_ready ? 'Ready' : 'Fallback'}</>
+                  )}
+                  {selectedPipelineMode === 'hybrid_paddle_vl' && (
+                    <> • PaddleOCR-VL-Vi: {vlmHealth.paddleocr_vl_ready && vlmHealth.rapidocr_ready ? 'Ready' : 'Chưa cài'}</>
+                  )}
+                </span>
+              )}
+            </div>
+            <Select
+              value={selectedModel}
+              disabled={isProcessing}
+              onChange={(e) => setSelectedModel(e.target.value)}
+              options={
+                (() => {
+                  const targetMode = selectedPipelineMode === 'vlm' ? 'vlm' : 'hybrid';
+                  const filtered = (vlmHealth?.available_models || []).filter(
+                    (m) => !m.mode || m.mode === targetMode || m.mode === 'both'
+                  );
+                  if (filtered.length > 0) {
+                    return filtered.map((m) => ({
+                      value: m.name,
+                      label: `${m.label} [${m.vram_estimate}]${m.installed ? ' ✓' : ''}`,
+                    }));
+                  }
+                  return targetMode === 'hybrid'
+                    ? [
+                        { value: 'qwen2.5:3b', label: 'Hybrid: Qwen2.5 3B Text (Khuyên dùng) [~1.9 GB]' },
+                        { value: 'qwen2.5:1.5b', label: 'Hybrid: Qwen2.5 1.5B Text (Siêu nhẹ) [~1.0 GB]' },
+                        { value: 'qwen3:1.7b', label: 'Hybrid: Qwen3 1.7B Text [~1.4 GB]' },
+                        { value: 'qwen3-vl:2b-instruct', label: 'Qwen3-VL 2B Instruct [~1.9 GB]' },
+                      ]
+                    : [
+                        { value: 'qwen2.5vl:3b', label: 'Pure VLM: Qwen2.5-VL 3B [~3.2 GB]' },
+                        { value: 'qwen3-vl:2b-instruct', label: 'Pure VLM: Qwen3-VL 2B Instruct [~1.9 GB]' },
+                        { value: 'qwen3-vl:4b-instruct', label: 'Pure VLM: Qwen3-VL 4B Instruct [~3.3 GB]' },
+                      ];
+                })()
+              }
+              className="text-xs"
+            />
+            <p className="text-[11px] text-slate-400 mt-1">
+              {selectedPipelineMode === 'hybrid_paddle_vl'
+                ? <>Chế độ Hybrid PaddleOCR-VL dùng <strong>DocAligner + RapidOCR + PaddleOCR-VL 1.6 Vi (Ollama GPU)</strong> đọc chữ Việt (kể cả CMND cũ/mờ) rồi gửi sang LLM text nhẹ (<strong>{selectedModel}</strong>) để chuẩn hóa JSON.</>
+                : selectedPipelineMode === 'hybrid'
+                ? <>Chế độ Hybrid dùng <strong>DocAligner + RapidOCR + VietOCR (CPU)</strong> đọc chữ Việt rồi gửi sang LLM text nhẹ (<strong>qwen2.5:3b</strong> / <strong>qwen2.5:1.5b</strong>) để chuẩn hóa JSON.</>
+                : <>Chế độ Pure VLM gửi ảnh đã cắt thẳng sang mô hình thị giác <strong>qwen2.5vl:3b</strong> hoặc <strong>qwen3-vl:2b-instruct</strong>.</>}
+            </p>
+          </div>
+
           {isProcessing && (
             <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-blue-800 text-xs flex items-center gap-2">
               <Loader2 className="h-4 w-4 animate-spin text-blue-600 shrink-0" />
-              <span>Đang tự động tách nền, xoay thẳng thẻ ID và gửi sang VLM Qwen2.5-VL bóc tách... Vui lòng đợi trong giây lát.</span>
+              <span>
+                {selectedPipelineMode === 'hybrid_paddle_vl'
+                  ? `Đang tách nền DocAligner, đọc PaddleOCR-VL 1.6 Vi (GPU) và chuẩn hóa JSON bằng ${selectedModel}...`
+                  : selectedPipelineMode === 'hybrid'
+                  ? `Đang tách nền DocAligner, đọc VietOCR và chuẩn hóa JSON bằng ${selectedModel}...`
+                  : `Đang tách nền, xoay thẳng thẻ bằng CV và gửi sang VLM (${selectedModel}) bóc tách...`}
+              </span>
             </div>
           )}
 

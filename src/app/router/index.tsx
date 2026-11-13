@@ -34,7 +34,19 @@ import { SystemManagementPage } from '@/modules/admin/system/SystemManagementPag
 
 const RootRedirect: React.FC = () => {
   const token = localStorage.getItem('ocr_access_token');
-  return <Navigate to={token ? '/app/dashboard' : '/login'} replace />;
+  if (!token) {
+    return <Navigate to="/login" replace />;
+  }
+  try {
+    const rawUser = localStorage.getItem('ocr_user_profile');
+    const user = rawUser ? JSON.parse(rawUser) : null;
+    if (user?.role === 'PLATFORM_ADMIN') {
+      return <Navigate to="/admin/dashboard" replace />;
+    }
+  } catch {
+    // ignore JSON error
+  }
+  return <Navigate to="/app/dashboard" replace />;
 };
 
 export const router = createBrowserRouter([
