@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 420" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="800" y2="420" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="55%" stop-color="#1e293b" />
+      <stop offset="100%" stop-color="#1e3a8a" />
+    </linearGradient>
+    <linearGradient id="cardGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.96" />
+      <stop offset="100%" stop-color="#e2e8f0" stop-opacity="0.92" />
+    </linearGradient>
+    <linearGradient id="scanBeam" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0" />
+      <stop offset="50%" stop-color="#38bdf8" stop-opacity="0.45" />
+      <stop offset="100%" stop-color="#38bdf8" stop-opacity="0" />
+    </linearGradient>
+  </defs>
+
+  <rect width="800" height="420" fill="url(#bg)" />
+
+  <!-- Subtle grid -->
+  <g stroke="#334155" stroke-opacity="0.35" stroke-width="1">
+    <path d="M0 70 H800 M0 140 H800 M0 210 H800 M0 280 H800 M0 350 H800" />
+    <path d="M100 0 V420 M200 0 V420 M300 0 V420 M400 0 V420 M500 0 V420 M600 0 V420 M700 0 V420" />
+  </g>
+
+  <!-- Background back card (Passport / Driver License) -->
+  <g transform="translate(415 88) rotate(5)">
+    <rect x="0" y="0" width="260" height="170" rx="14" fill="#1d4ed8" fill-opacity="0.35" stroke="#60a5fa" stroke-opacity="0.5" stroke-width="1.5" />
+    <rect x="20" y="22" width="70" height="10" rx="4" fill="#93c5fd" fill-opacity="0.65" />
+    <rect x="20" y="42" width="140" height="8" rx="4" fill="#bfdbfe" fill-opacity="0.45" />
+    <rect x="20" y="128" width="220" height="8" rx="3" fill="#93c5fd" fill-opacity="0.45" />
+    <rect x="20" y="144" width="220" height="8" rx="3" fill="#93c5fd" fill-opacity="0.45" />
+  </g>
+
+  <!-- Main ID Card (CCCD) -->
+  <g transform="translate(150 96)">
+    <rect x="0" y="0" width="350" height="224" rx="18" fill="url(#cardGrad)" stroke="#94a3b8" stroke-opacity="0.4" stroke-width="1.5" />
+    <!-- Top Accent Bar -->
+    <path d="M0 18 C0 8 8 0 18 0 H332 C342 0 350 8 350 18 V44 H0 Z" fill="#1e40af" />
+    <rect x="22" y="16" width="150" height="10" rx="4" fill="#ffffff" fill-opacity="0.9" />
+    <rect x="275" y="14" width="52" height="14" rx="7" fill="#38bdf8" fill-opacity="0.35" />
+
+    <!-- Portrait Box -->
+    <rect x="22" y="64" width="84" height="108" rx="10" fill="#cbd5e1" stroke="#94a3b8" stroke-width="1.5" />
+    <circle cx="64" cy="102" r="18" fill="#64748b" />
+    <path d="M36 154 C36 134 92 134 92 154" fill="#64748b" />
+
+    <!-- Chip -->
+    <rect x="30" y="182" width="38" height="26" rx="5" fill="#fbbf24" fill-opacity="0.85" stroke="#d97706" stroke-width="1" />
+    <path d="M42 182 V208 M56 182 V208 M30 195 H68" stroke="#b45309" stroke-opacity="0.6" stroke-width="1" />
+
+    <!-- Extracted OCR Text Lines -->
+    <rect x="126" y="68" width="120" height="11" rx="4" fill="#0f172a" fill-opacity="0.85" />
+    <rect x="126" y="92" width="190" height="9" rx="4" fill="#334155" fill-opacity="0.7" />
+    <rect x="126" y="114" width="160" height="9" rx="4" fill="#475569" fill-opacity="0.6" />
+    <rect x="126" y="136" width="196" height="9" rx="4" fill="#475569" fill-opacity="0.6" />
+    <rect x="126" y="158" width="140" height="9" rx="4" fill="#475569" fill-opacity="0.6" />
+    <rect x="126" y="184" width="198" height="18" rx="6" fill="#dbeafe" stroke="#3b82f6" stroke-opacity="0.5" stroke-width="1" />
+    <rect x="136" y="190" width="120" height="6" rx="3" fill="#1d4ed8" fill-opacity="0.8" />
+
+    <!-- DocAligner corner brackets -->
+    <path d="M-10 22 V-10 H22" stroke="#38bdf8" stroke-width="3.5" stroke-linecap="round" />
+    <path d="M328 -10 H360 V22" stroke="#38bdf8" stroke-width="3.5" stroke-linecap="round" />
+    <path d="M-10 202 V234 H22" stroke="#38bdf8" stroke-width="3.5" stroke-linecap="round" />
+    <path d="M328 234 H360 V202" stroke="#38bdf8" stroke-width="3.5" stroke-linecap="round" />
+
+    <!-- Scan beam -->
+    <rect x="-4" y="98" width="358" height="34" fill="url(#scanBeam)" />
+    <line x1="-6" y1="115" x2="356" y2="115" stroke="#38bdf8" stroke-width="2" />
+  </g>
+
+  <!-- JSON Output Pill on Right -->
+  <g transform="translate(528 190)">
+    <rect x="0" y="0" width="196" height="122" rx="14" fill="#020617" fill-opacity="0.88" stroke="#38bdf8" stroke-opacity="0.55" stroke-width="1.5" />
+    <circle cx="18" cy="18" r="4" fill="#10b981" />
+    <rect x="30" y="14" width="90" height="8" rx="4" fill="#94a3b8" />
+    <rect x="16" y="38" width="118" height="7" rx="3.5" fill="#38bdf8" fill-opacity="0.85" />
+    <rect x="16" y="56" width="150" height="7" rx="3.5" fill="#34d399" fill-opacity="0.85" />
+    <rect x="16" y="74" width="132" height="7" rx="3.5" fill="#34d399" fill-opacity="0.7" />
+    <rect x="16" y="92" width="160" height="7" rx="3.5" fill="#a78bfa" fill-opacity="0.8" />
+  </g>
+
+  <!-- Labels at bottom -->
+  <g transform="translate(150 356)">
+    <rect x="0" y="0" width="128" height="28" rx="14" fill="#1e293b" stroke="#38bdf8" stroke-opacity="0.45" />
+    <text x="64" y="18" text-anchor="middle" fill="#e2e8f0" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="600">CCCD / CMND</text>
+
+    <rect x="142" y="0" width="154" height="28" rx="14" fill="#1e293b" stroke="#38bdf8" stroke-opacity="0.45" />
+    <text x="219" y="18" text-anchor="middle" fill="#e2e8f0" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="600">Giấy phép lái xe</text>
+
+    <rect x="310" y="0" width="144" height="28" rx="14" fill="#1e293b" stroke="#38bdf8" stroke-opacity="0.45" />
+    <text x="382" y="18" text-anchor="middle" fill="#e2e8f0" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="600">Hộ chiếu (MRZ)</text>
+  </g>
+</svg>

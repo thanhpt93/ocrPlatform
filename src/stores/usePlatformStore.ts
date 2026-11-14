@@ -16,6 +16,7 @@ import {
   LicenseStatus,
   ServiceStatus,
   CustomerStatus,
+  CustomerUsageSummary,
   AdminDashboardStats,
   AdminMonitoring,
   AdminSystemConfig,
@@ -29,6 +30,8 @@ import {
   licensesApi,
   authApi,
   adminApi,
+  usageApi,
+  ocrApi,
 } from '@/services/api/endpoints';
 import { api } from '@/services/api/client';
 
@@ -47,6 +50,7 @@ interface PlatformState {
   adminUsers: AdminUser[];
   auditLogs: AuditLog[];
   dailyStats: DailyUsageStat[];
+  customerUsageSummary: CustomerUsageSummary | null;
 
   // Real Admin Telemetry & Aggregates
   adminDashboard: AdminDashboardStats | null;
@@ -154,8 +158,24 @@ const loadStoredJobs = (userId?: string): OCRJob[] => {
 
 const saveStoredJobs = (jobs: OCRJob[]) => {
   if (typeof window === 'undefined') return;
-  const build = (maxImgs: number) =>
-    jobs.slice(0, 30).map((j, idx) => (idx < maxImgs ? j : { ...j, originalImageUrl: undefined, croppedImageUrl: undefined }));
+  // Never strip server-backed image URLs (/api/v1/ocr/jobs/...); only cap legacy base64 data: URLs to avoid 5MB quota overflow.
+  const build = (maxDataUrlImgs: number) => {
+    let dataUrlCount = 0;
+    return jobs.slice(0, 100).map((j) => {
+      const hasDataUrl =
+        j.originalImageUrl?.startsWith('data:') || j.croppedImageUrl?.startsWith('data:');
+      if (!hasDataUrl) return j;
+      if (dataUrlCount < maxDataUrlImgs) {
+        dataUrlCount += 1;
+        return j;
+      }
+      return {
+        ...j,
+        originalImageUrl: j.originalImageUrl?.startsWith('data:') ? undefined : j.originalImageUrl,
+        croppedImageUrl: j.croppedImageUrl?.startsWith('data:') ? undefined : j.croppedImageUrl,
+      };
+    });
+  };
   try {
     localStorage.setItem(JOBS_STORAGE_KEY, JSON.stringify(build(5)));
   } catch {
@@ -167,6 +187,46 @@ const saveStoredJobs = (jobs: OCRJob[]) => {
   }
 };
 
+const formatDocTypeLabel = (detectedType?: string): string => {
+  switch (detectedType) {
+    case 'id_card':
+      return 'Căn cước công dân (CCCD)';
+    case 'passport':
+      return 'Hộ chiếu (Passport)';
+    case 'driver_license':
+      return 'Giấy phép lái xe (GPLX)';
+    default:
+      return 'Giấy tờ tùy thân';
+  }
+};
+
+const mapBackendOcrJob = (j: any, fallbackCustomerId: string, fallbackCustomerName: string): OCRJob => {
+  const timeStr = j.created_at ? new Date(j.created_at).toLocaleString() : '';
+  return {
+    id: j.job_id,
+    customerId: fallbackCustomerId,
+    customerName: fallbackCustomerName,
+    fileName: j.file_name || 'uploaded_document.jpg',
+    fileSize: j.file_size || '—',
+    fileType: j.file_type || 'IMAGE',
+    serviceId: j.service_id || '',
+    serviceName: j.service_name || 'ID Document & Passport OCR',
+    docTypeId: j.detected_type || 'identity_document',
+    docTypeName: formatDocTypeLabel(j.detected_type),
+    submissionTime: timeStr,
+    createdAt: j.created_at || undefined,
+    completionTime: timeStr,
+    pageCount: 1,
+    processingDurationMs: j.execution_time_ms || 0,
+    confidenceScore: j.confidence_score ?? 99.2,
+    extractedDataPreview: j.extracted_data || undefined,
+    originalImageUrl: j.original_image_url || undefined,
+    croppedImageUrl: j.cropped_image_url || undefined,
+    segmentationInfo: j.segmentation_info || undefined,
+    status: (j.status as OCRJob['status']) || 'completed',
+  };
+};
+
 const mapService = (s: any): OCRService => ({
   id: s.id,
   code: s.code,
@@ -174,7 +234,7 @@ const mapService = (s: any): OCRService => ({
   category: s.category,
   description: s.description,
   longDescription: s.long_description,
-  thumbnail: s.thumbnail || 'https://images.unsplash.com/photo-1568667256549-094345857637?auto=format&fit=crop&w=600&q=80',
+  thumbnail: s.thumbnail || '/thumbnails/id-document-ocr.svg',
   supportedFileFormats: s.supported_file_formats || [],
   supportedLanguages: s.supported_languages || [],
   capabilities: s.capabilities || [],
@@ -303,6 +363,7 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
   adminUsers: [],
   auditLogs: [],
   dailyStats: [],
+  customerUsageSummary: null,
 
   adminDashboard: null,
   adminMonitoring: null,
@@ -334,7 +395,9 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
         currentUser: api.getCurrentUser(),
         activeCustomerId: res.user_id,
         activePortal: res.role === 'PLATFORM_ADMIN' ? 'admin' : 'customer',
-        jobs: loadStoredJobs(res.user_id),
+        jobs: [],
+        dailyStats: [],
+        customerUsageSummary: null,
       });
       await get().syncWithBackend();
       return true;
@@ -532,22 +595,61 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
       const mappedDocTypes = Array.isArray(rawDocTypes) ? rawDocTypes.map(mapDocType) : [];
       const mappedPackages = Array.isArray(rawPackages) ? rawPackages.map(mapPackage) : [];
 
+      let effectiveUser = curUser;
       let mappedSubs: Subscription[] = [];
       let mappedLics: License[] = [];
       let mappedOrders: Order[] = [];
       let mappedPayments: Payment[] = [];
       let customerList: Customer[] = [];
+      let mergedJobs: OCRJob[] = [];
+      let usageSummary: CustomerUsageSummary | null = null;
+      let mappedDailyStats: DailyUsageStat[] = [];
 
-      if (curUser) {
+      if (curUser && api.getAccessToken()) {
         try {
-          const [rawSubs, rawLics, rawOrders, rawPays] = await Promise.all([
+          const [meRes, rawSubs, rawLics, rawOrders, rawPays, rawJobs, rawUsageSummary] = await Promise.all([
+            authApi.getMe().catch(() => null),
             subscriptionsApi.getUserSubscriptions(),
             licensesApi.getUserLicenses(),
             ordersApi.getUserOrders(),
             ordersApi.getPaymentHistory(),
+            ocrApi.getJobs(100).catch((err) => {
+              console.warn('OCR job history fetch failed:', err);
+              return null;
+            }),
+            usageApi.getSummary().catch((err) => {
+              console.warn('Customer usage summary fetch failed:', err);
+              return null;
+            }),
           ]);
 
-          const displayName = curUser.company_name || curUser.full_name || curUser.email;
+          if (meRes && meRes.id) {
+            effectiveUser = {
+              ...curUser,
+              id: meRes.id,
+              email: meRes.email,
+              full_name: meRes.full_name,
+              role: meRes.role,
+              status: meRes.status,
+              created_at: meRes.created_at,
+              company_name: meRes.profile?.company_name ?? curUser.company_name,
+              phone: meRes.profile?.phone ?? curUser.phone,
+              address: meRes.profile?.address ?? curUser.address,
+              tax_id: meRes.profile?.tax_id ?? curUser.tax_id,
+              profile: meRes.profile ?? curUser.profile,
+            };
+            try {
+              localStorage.setItem('ocr_user', JSON.stringify(effectiveUser));
+            } catch {
+              // ignore storage error
+            }
+          }
+
+          const displayName =
+            effectiveUser?.profile?.company_name ||
+            effectiveUser?.company_name ||
+            effectiveUser?.full_name ||
+            effectiveUser?.email;
 
           if (Array.isArray(rawSubs)) {
             mappedSubs = rawSubs.map((s) => ({
@@ -624,45 +726,77 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
             }));
           }
 
+          if (rawUsageSummary) {
+            usageSummary = rawUsageSummary;
+            mappedDailyStats = (rawUsageSummary.daily_usage || []).map((d) => ({
+              date: d.date,
+              pages: d.units,
+              jobs: d.jobs,
+              failed: 0,
+              avgDurationMs: rawUsageSummary.avg_latency_ms || 0,
+            }));
+          }
+
           customerList = [
             {
-              id: curUser.id,
+              id: effectiveUser.id,
               orgName: displayName,
-              fullName: curUser.full_name,
-              email: curUser.email,
-              phone: curUser.phone || '',
-              address: '',
-              taxId: '',
-              registrationDate: new Date().toISOString().split('T')[0],
+              fullName: effectiveUser.full_name,
+              email: effectiveUser.email,
+              phone: effectiveUser.phone || '',
+              address: effectiveUser.address || '',
+              taxId: effectiveUser.tax_id || '',
+              registrationDate: effectiveUser.created_at
+                ? String(effectiveUser.created_at).split('T')[0]
+                : new Date().toISOString().split('T')[0],
               tier: 'Standard',
               status: 'active',
               memberCount: 1,
               members: [
                 {
-                  id: curUser.id,
-                  name: curUser.full_name || curUser.email,
-                  email: curUser.email,
+                  id: effectiveUser.id,
+                  name: effectiveUser.full_name || effectiveUser.email,
+                  email: effectiveUser.email,
                   role: 'Owner',
                   status: 'active',
-                  addedDate: new Date().toISOString().split('T')[0],
+                  addedDate: effectiveUser.created_at
+                    ? String(effectiveUser.created_at).split('T')[0]
+                    : new Date().toISOString().split('T')[0],
                 },
               ],
-              activeSubscriptionsCount: mappedSubs.length,
-              activeLicensesCount: mappedLics.length,
-              totalUsagePages: mappedLics.reduce((a, b) => a + (b.usedQuota || 0), 0),
+              activeSubscriptionsCount: mappedSubs.filter((s) => s.status === 'active').length,
+              activeLicensesCount: mappedLics.filter((l) => l.status === 'active').length,
+              totalUsagePages: usageSummary?.used_quota ?? mappedLics.reduce((a, b) => a + (b.usedQuota || 0), 0),
               monthlySpend: mappedOrders
                 .filter((o) => o.status === 'completed')
                 .reduce((a, b) => a + b.amount, 0),
             },
           ];
+
+          if (Array.isArray(rawJobs)) {
+            const currentStored = get().jobs.length > 0 ? get().jobs : loadStoredJobs(effectiveUser.id);
+            const localById = new Map(currentStored.map((j) => [j.id, j]));
+            mergedJobs = rawJobs.map((j) => {
+              const mapped = mapBackendOcrJob(j, effectiveUser.id, displayName);
+              const localCopy = localById.get(mapped.id);
+              return {
+                ...mapped,
+                originalImageUrl: mapped.originalImageUrl || localCopy?.originalImageUrl,
+                croppedImageUrl: mapped.croppedImageUrl || localCopy?.croppedImageUrl,
+              };
+            });
+            saveStoredJobs(mergedJobs);
+          } else {
+            mergedJobs = loadStoredJobs(effectiveUser.id);
+          }
         } catch (err) {
           console.warn('Customer portal fetch note:', err);
         }
       }
 
       set({
-        currentUser: curUser,
-        activeCustomerId: curUser ? curUser.id : '',
+        currentUser: api.getAccessToken() ? effectiveUser : null,
+        activeCustomerId: api.getAccessToken() && effectiveUser ? effectiveUser.id : '',
         customers: customerList,
         services: mappedServices,
         docTypes: mappedDocTypes,
@@ -671,7 +805,9 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
         licenses: mappedLics,
         orders: mappedOrders,
         payments: mappedPayments,
-        jobs: loadStoredJobs(curUser?.id),
+        jobs: mergedJobs,
+        dailyStats: mappedDailyStats,
+        customerUsageSummary: usageSummary,
         backendConnected: true,
       });
     } catch (e) {
@@ -995,6 +1131,7 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
     const newJob: OCRJob = {
       id: job.id || `JOB-${Date.now().toString().slice(-6)}`,
       submissionTime: job.submissionTime || now.toLocaleString(),
+      createdAt: job.createdAt || now.toISOString(),
       completionTime: job.status === 'completed' || !job.status ? now.toLocaleString() : undefined,
       ...job,
       status: job.status || 'completed',

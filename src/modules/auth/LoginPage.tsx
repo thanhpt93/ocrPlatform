@@ -41,6 +41,7 @@ export const LoginPage: React.FC = () => {
         invoices: [],
         payments: [],
         dailyStats: [],
+        customerUsageSummary: null,
         adminDashboard: null,
         adminMonitoring: null,
         auditLogs: [],

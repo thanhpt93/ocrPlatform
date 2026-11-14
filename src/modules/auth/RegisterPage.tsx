@@ -51,6 +51,7 @@ export const RegisterPage: React.FC = () => {
         invoices: [],
         payments: [],
         dailyStats: [],
+        customerUsageSummary: null,
       });
       await syncWithBackend();
       navigate('/app/dashboard');

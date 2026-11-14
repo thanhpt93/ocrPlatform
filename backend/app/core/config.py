@@ -27,12 +27,12 @@ class Settings(BaseSettings):
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
     # OCR Pipeline & Ollama Inference Configuration
-    OCR_PIPELINE_MODE: str = "hybrid"  # "hybrid" (VietOCR + Text LLM), "hybrid_paddle_vl" (PaddleOCR-VL-Vi + Text LLM), or "vlm"
-    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OCR_PIPELINE_MODE: str = "hybrid_paddle_vl"  # DocAligner + RapidOCR TextDet + PaddleOCR-VL-Vi + Text LLM
+    OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"
     OLLAMA_TEXT_MODEL: str = "qwen2.5:3b"
     PADDLEOCR_VL_MODEL: str = "paddleocr-vl-vi"
     PADDLEOCR_VL_STRIP_MIN_ROW_HEIGHT: int = 48
-    OLLAMA_MODEL: str = "qwen2.5vl:3b"
+    OLLAMA_MODEL: str = "qwen2.5:3b"
     OLLAMA_NUM_CTX: int = 4096
     OLLAMA_NUM_PREDICT: int = 1024
     OLLAMA_TIMEOUT_SECONDS: int = 240
@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     RAPIDOCR_DET_THRESH: float = 0.25
     RAPIDOCR_DET_BOX_THRESH: float = 0.40
     RAPIDOCR_DET_UNCLIP_RATIO: float = 1.55
-    VIETOCR_MODEL_NAME: str = "vgg_transformer"
+    OCR_STORAGE_DIR: str = os.path.join(_PROJECT_ROOT, "storage", "ocr_jobs")
 
     # CORS
     BACKEND_CORS_ORIGINS: List[str] = [

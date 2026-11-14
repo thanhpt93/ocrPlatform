@@ -1,9 +1,11 @@
 import base64
+import hmac
 import io
 import logging
 import math
 import os
 import pathlib
+import secrets
 import sys
 import threading
 import time
@@ -31,27 +33,28 @@ _DOCALIGNER_INIT_FAILED: bool = False
 _RAPIDOCR_LOCK = threading.Lock()
 _RAPIDOCR_DET: Any = None
 _RAPIDOCR_INIT_FAILED: bool = False
-_VIETOCR_LOCK = threading.Lock()
-_VIETOCR_PREDICTOR: Any = None
-_VIETOCR_INIT_FAILED: bool = False
 
 from app.core.config import settings
 from app.core.exceptions import (
-    BadRequestException, ForbiddenException, EntityNotFoundException
+    BadRequestException, ForbiddenException, EntityNotFoundException, UnauthorizedException
 )
 from app.common.models.users import User
 from app.common.models.licenses import License
 from app.common.models.usage import UsageBalance, UsageRecord, UsageLedger
 from app.common.models.credentials import APICredential
-from app.common.enums import LicenseStatus, CredentialStatus, LedgerEntryType, QuotaType
-from app.common.schemas.ocr_engine import OCRExtractionResponse, SegmentationMetadata, VLMModelOption
-from app.modules.ocr_engine.prompts import (
-    SYSTEM_PROMPT_IDENTITY_OCR,
-    SYSTEM_PROMPT_IDENTITY_OCR_CROPPED,
-    SYSTEM_PROMPT_HYBRID_OCR_JSON_MAPPER,
-)
+from app.common.models.ocr_jobs import OCRJobRecord
+from app.common.enums import LicenseStatus, CredentialStatus, LedgerEntryType, QuotaType, UserRole
+from app.common.schemas.ocr_engine import OCRExtractionResponse, OCRJobHistoryItem, SegmentationMetadata, VLMModelOption
+from app.modules.ocr_engine.prompts import SYSTEM_PROMPT_HYBRID_OCR_JSON_MAPPER
 
-OLLAMA_API_URL = f"{settings.OLLAMA_BASE_URL.rstrip('/')}/api/chat"
+
+def _get_ollama_base_url() -> str:
+    """Normalize localhost -> 127.0.0.1 to avoid ~2s Windows IPv6 [::1] fallback delay per urllib call."""
+    base = (settings.OLLAMA_BASE_URL or "http://127.0.0.1:11434").strip().rstrip("/")
+    return re.sub(r"^(https?://)localhost(?=(?::\d+)?(?:/|$))", r"\g<1>127.0.0.1", base, flags=re.IGNORECASE)
+
+
+OLLAMA_API_URL = f"{_get_ollama_base_url()}/api/chat"
 DEFAULT_MODEL = settings.OLLAMA_MODEL
 MAX_IMAGE_DIMENSION = 1600
 PREVIEW_MAX_DIMENSION = 900
@@ -65,59 +68,73 @@ RECOMMENDED_VLM_MODELS: List[Dict[str, str]] = [
         "mode": "hybrid",
     },
     {
-        "name": "qwen2.5:1.5b",
-        "label": "Hybrid: Qwen2.5 1.5B Text (Siêu nhẹ - 100% VRAM)",
-        "vram_estimate": "~1.0 GB",
-        "tier": "hybrid_fast",
-        "mode": "hybrid",
-    },
-    {
-        "name": "qwen3:1.7b",
-        "label": "Hybrid: Qwen3 1.7B Text (Nhẹ - Chuẩn hóa JSON)",
-        "vram_estimate": "~1.4 GB",
-        "tier": "hybrid_fast",
-        "mode": "hybrid",
-    },
-    {
         "name": "paddleocr-vl-vi",
         "label": "PaddleOCR-VL 1.6 Vi (GGUF GPU Recognizer - Đọc CMND cũ/ảnh mờ vượt trội)",
         "vram_estimate": "~0.9 GB",
         "tier": "hybrid_paddle_vl",
         "mode": "hybrid_paddle_vl",
     },
-    {
-        "name": "qwen3-vl:2b-instruct",
-        "label": "Qwen3-VL 2B Instruct (Nhẹ nhất - Chạy gọn trong 4GB VRAM)",
-        "vram_estimate": "~1.9 GB",
-        "tier": "4gb_vram",
-        "mode": "both",
-    },
-    {
-        "name": "qwen2.5vl:3b",
-        "label": "Pure VLM: Qwen2.5-VL 3B (Đọc ảnh trực tiếp - 4GB VRAM)",
-        "vram_estimate": "~3.2 GB",
-        "tier": "4gb_vram",
-        "mode": "vlm",
-    },
-    {
-        "name": "qwen3-vl:4b-instruct",
-        "label": "Pure VLM: Qwen3-VL 4B Instruct (Độ chính xác cao hơn - 4GB VRAM + RAM)",
-        "vram_estimate": "~3.3 GB",
-        "tier": "hybrid_4gb",
-        "mode": "vlm",
-    },
-    {
-        "name": "qwen2.5vl:7b",
-        "label": "Pure VLM: Qwen2.5-VL 7B (Độ chính xác cao - Cần >=6GB VRAM)",
-        "vram_estimate": "~6.0 GB",
-        "tier": "high_vram",
-        "mode": "vlm",
-    },
 ]
 
 
 def utc_now():
     return datetime.now(timezone.utc)
+
+
+def _format_file_size(size_bytes: int) -> str:
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    if size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    return f"{size_bytes / (1024 * 1024):.2f} MB"
+
+
+def _decode_data_url_bytes(data_url: Optional[str]) -> Optional[bytes]:
+    if not data_url or not isinstance(data_url, str):
+        return None
+    if data_url.startswith("data:") and "," in data_url:
+        try:
+            _, b64 = data_url.split(",", 1)
+            return base64.b64decode(b64)
+        except Exception:
+            return None
+    return None
+
+
+def _generate_unique_job_id(db: Session) -> str:
+    for attempt in range(8):
+        suffix = "" if attempt == 0 else f"-{secrets.token_hex(2).upper()}"
+        candidate = f"JOB-{int(time.time() * 1000) % 1000000:06d}{suffix}"
+        exists = db.query(OCRJobRecord.id).filter(OCRJobRecord.job_id == candidate).first()
+        if not exists:
+            return candidate
+    return f"JOB-{secrets.token_hex(4).upper()}"
+
+
+def _persist_job_images_to_disk(
+    job_id: str,
+    orig_url: Optional[str],
+    cropped_url: Optional[str],
+    orig_fallback: Optional[bytes] = None,
+    cropped_fallback: Optional[bytes] = None,
+) -> Tuple[Optional[str], Optional[str]]:
+    storage_root = pathlib.Path(settings.OCR_STORAGE_DIR).resolve()
+    job_dir = (storage_root / job_id).resolve()
+    job_dir.relative_to(storage_root)
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    orig_bytes = _decode_data_url_bytes(orig_url) or orig_fallback
+    crop_bytes = _decode_data_url_bytes(cropped_url) or cropped_fallback or orig_bytes
+
+    orig_rel: Optional[str] = None
+    crop_rel: Optional[str] = None
+    if orig_bytes:
+        (job_dir / "original.jpg").write_bytes(orig_bytes)
+        orig_rel = f"{job_id}/original.jpg"
+    if crop_bytes:
+        (job_dir / "cropped.jpg").write_bytes(crop_bytes)
+        crop_rel = f"{job_id}/cropped.jpg"
+    return orig_rel, crop_rel
 
 
 def normalize_image_bytes(image_bytes: bytes) -> bytes:
@@ -150,25 +167,6 @@ def normalize_image_bytes(image_bytes: bytes) -> bytes:
             return out_buf.getvalue()
     except Exception:
         return image_bytes
-
-
-def _qwen2vl_smart_resize_dims(width: int, height: int, factor: int = 28, min_pixels: int = 3136, max_pixels: int = 12845056) -> Tuple[int, int]:
-    """
-    Compute the exact internal image dimensions used by Qwen2.5-VL's processor (smart_resize),
-    allowing exact conversion from Qwen2.5-VL's bbox_2d coordinates back to original image pixels.
-    """
-    h_bar = max(factor, round(height / factor) * factor)
-    w_bar = max(factor, round(width / factor) * factor)
-    if h_bar * w_bar > max_pixels:
-        beta = math.sqrt((height * width) / max_pixels)
-        h_bar = max(factor, math.floor(height / beta / factor) * factor)
-        w_bar = max(factor, math.floor(width / beta / factor) * factor)
-    elif h_bar * w_bar < min_pixels:
-        beta = math.sqrt(min_pixels / (height * width))
-        h_bar = math.ceil(height * beta / factor) * factor
-        w_bar = math.ceil(width * beta / factor) * factor
-    return int(w_bar), int(h_bar)
-
 
 def _ensure_windows_turbojpeg_path() -> None:
     """Ensure conda's Library/bin (containing turbojpeg.dll) is on PATH before importing docaligner/capybara."""
@@ -544,70 +542,6 @@ def _encode_vlm_image_bytes(
     vlm_img.save(buf, format="JPEG", quality=92)
     return buf.getvalue()
 
-
-def _parse_vlm_bbox_to_pixels(raw_bbox: Any, w: int, h: int) -> Optional[List[int]]:
-    """
-    Convert Qwen2.5-VL's bbox output [xmin, ymin, xmax, ymax] into exact image pixel coordinates.
-    Handles:
-      1. Native Qwen2.5-VL smart_resize pixel coordinates (when image >= 560px)
-      2. Normalized 0..1000 coordinates (when image < 560px or model outputs normalized scale)
-    """
-    if not isinstance(raw_bbox, (list, tuple)) or len(raw_bbox) != 4:
-        return None
-    try:
-        vals = [float(v) for v in raw_bbox]
-    except Exception:
-        return None
-
-    x1, y1, x2, y2 = vals
-    if x1 > x2:
-        x1, x2 = x2, x1
-    if y1 > y2:
-        y1, y2 = y2, y1
-
-    smart_w, smart_h = _qwen2vl_smart_resize_dims(w, h)
-
-    fits_pixel_space = (x2 <= max(w, smart_w) * 1.05) and (y2 <= max(h, smart_h) * 1.05)
-    exceeds_pixel_space = (x2 > w * 1.04) or (y2 > h * 1.04)
-
-    if exceeds_pixel_space and max(vals) <= 1005:
-        xmin = int(round((x1 / 1000.0) * w))
-        ymin = int(round((y1 / 1000.0) * h))
-        xmax = int(round((x2 / 1000.0) * w))
-        ymax = int(round((y2 / 1000.0) * h))
-    elif fits_pixel_space:
-        scale_x = w / float(smart_w) if abs(smart_w - w) <= 32 else 1.0
-        scale_y = h / float(smart_h) if abs(smart_h - h) <= 32 else 1.0
-        xmin = int(round(x1 * scale_x))
-        ymin = int(round(y1 * scale_y))
-        xmax = int(round(x2 * scale_x))
-        ymax = int(round(y2 * scale_y))
-    else:
-        xmin = int(round((x1 / 1000.0) * w))
-        ymin = int(round((y1 / 1000.0) * h))
-        xmax = int(round((x2 / 1000.0) * w))
-        ymax = int(round((y2 / 1000.0) * h))
-
-    xmin = max(0, min(w, xmin))
-    ymin = max(0, min(h, ymin))
-    xmax = max(0, min(w, xmax))
-    ymax = max(0, min(h, ymax))
-
-    bw = xmax - xmin
-    bh = ymax - ymin
-    area_ratio = (bw * bh) / float(w * h)
-    if bw > w * 0.18 and bh > h * 0.12 and 0.06 <= area_ratio <= 0.99:
-        pad_x = int(w * 0.012)
-        pad_y = int(h * 0.012)
-        return [
-            max(0, xmin - pad_x),
-            max(0, ymin - pad_y),
-            min(w, xmax + pad_x),
-            min(h, ymax + pad_y),
-        ]
-    return None
-
-
 def _score_red_header_top(img: Image.Image) -> float:
     """
     Compute the red chromaticity score (red national emblem + red 'CĂN CƯỚC CÔNG DÂN' / 'GIẤY PHÉP LÁI XE' header)
@@ -619,14 +553,95 @@ def _score_red_header_top(img: Image.Image) -> float:
     r = top_strip[:, :, 0]
     g = top_strip[:, :, 1]
     b = top_strip[:, :, 2]
-    redness = r - np.maximum(g, b)
-    strong_red_mask = (redness > 26.0) & (r > 105.0)
+    max_gb = np.maximum(g, b)
+    redness = r - max_gb
+    gb_diff = np.abs(g - b)
+    strong_red_mask = (
+        (redness > 24.0)
+        & (r > 95.0)
+        & ((redness / np.maximum(r, 1.0)) > 0.24)
+        & (gb_diff <= np.maximum(18.0, redness * 0.55))
+    )
     return float(np.mean(strong_red_mask) * 1000.0 + np.percentile(redness, 97) * 0.08)
+
+
+def _detect_text_orientation_vote(img: Image.Image) -> Tuple[float, float, int]:
+    """
+    Use RapidOCR TextDet + TextCls (0° vs 180°) on horizontal text lines to determine
+    whether a landscape card image is upright (0°) or upside down (180°).
+    Returns (score_0, score_180, valid_box_count).
+    """
+    det = _get_rapidocr_det()
+    if det is None or cv2 is None or not hasattr(det, "text_det") or not hasattr(det, "text_cls"):
+        return 0.0, 0.0, 0
+
+    try:
+        rgb = np.asarray(img.convert("RGB"), dtype=np.uint8)
+        bgr = rgb[:, :, ::-1].copy()
+        h, w = bgr.shape[:2]
+        if w < 40 or h < 20:
+            return 0.0, 0.0, 0
+
+        if max(w, h) > 800:
+            scale = 800.0 / float(max(w, h))
+            bgr = cv2.resize(bgr, (max(1, int(round(w * scale))), max(1, int(round(h * scale)))), interpolation=cv2.INTER_AREA)
+        elif w < 500:
+            scale = 700.0 / float(w)
+            bgr = cv2.resize(bgr, (max(1, int(round(w * scale))), max(1, int(round(h * scale)))), interpolation=cv2.INTER_CUBIC)
+
+        pad = 16
+        border_px = np.concatenate([bgr[0], bgr[-1], bgr[:, 0], bgr[:, -1]], axis=0)
+        fill = tuple(int(v) for v in np.median(border_px, axis=0))
+        padded = cv2.copyMakeBorder(bgr, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=fill)
+        ph, pw = padded.shape[:2]
+
+        dt_boxes, _ = det.text_det(padded)
+        if dt_boxes is None or len(dt_boxes) == 0:
+            return 0.0, 0.0, 0
+
+        crops: List[np.ndarray] = []
+        widths: List[int] = []
+        for b in dt_boxes:
+            pts = np.asarray(b, dtype=np.float32)
+            x1 = max(0, int(pts[:, 0].min()) - 2)
+            y1 = max(0, int(pts[:, 1].min()) - 2)
+            x2 = min(pw, int(pts[:, 0].max()) + 2)
+            y2 = min(ph, int(pts[:, 1].max()) + 2)
+            bw = x2 - x1
+            bh = y2 - y1
+            if bw >= 18 and bh >= 6 and bw >= bh * 1.15:
+                crops.append(padded[y1:y2, x1:x2])
+                widths.append(bw)
+
+        if not crops:
+            return 0.0, 0.0, 0
+
+        _, cls_res, _ = det.text_cls(crops)
+        score_0 = 0.0
+        score_180 = 0.0
+        valid_count = 0
+        for (lbl, conf), bw in zip(cls_res, widths):
+            conf_f = float(conf)
+            if conf_f < 0.55:
+                continue
+            weight = conf_f * math.sqrt(float(bw))
+            if str(lbl) == "0":
+                score_0 += weight
+                valid_count += 1
+            elif str(lbl) == "180":
+                score_180 += weight
+                valid_count += 1
+        return score_0, score_180, valid_count
+    except Exception as exc:
+        logger.debug("Text orientation vote skipped: %s", exc)
+        return 0.0, 0.0, 0
 
 
 def _auto_upright_cropped_card(cropped_img: Image.Image, vlm_angle: Optional[Any] = None) -> Tuple[Image.Image, int]:
     """
     Ensure the cropped ID card is rotated to upright horizontal landscape orientation.
+    Uses RapidOCR 0°/180° text-line orientation classification as primary signal,
+    falling back to crimson header heuristic / VLM angle when no text lines exist.
     Returns (upright_image, clockwise_rotation_degrees).
     """
     cw, ch = cropped_img.size
@@ -644,8 +659,18 @@ def _auto_upright_cropped_card(cropped_img: Image.Image, vlm_angle: Optional[Any
         rot_90_cw = cropped_img.transpose(Image.Transpose.ROTATE_270)   # 90 deg clockwise
         rot_270_cw = cropped_img.transpose(Image.Transpose.ROTATE_90)   # 270 deg clockwise (90 deg counter-clockwise)
 
+        s0, s180, cnt = _detect_text_orientation_vote(rot_90_cw)
+        if cnt >= 2:
+            if s0 > s180 * 1.15:
+                return rot_90_cw, 90
+            if s180 > s0 * 1.15:
+                return rot_270_cw, 270
+
         score_90 = _score_red_header_top(rot_90_cw)
         score_270 = _score_red_header_top(rot_270_cw)
+
+        if parsed_vlm_angle in (90, 270):
+            return (rot_90_cw, 90) if parsed_vlm_angle == 90 else (rot_270_cw, 270)
 
         if abs(score_90 - score_270) > 1.2:
             if score_90 > score_270:
@@ -653,13 +678,17 @@ def _auto_upright_cropped_card(cropped_img: Image.Image, vlm_angle: Optional[Any
             else:
                 return rot_270_cw, 270
 
-        if parsed_vlm_angle in (90, 270):
-            return (rot_90_cw, 90) if parsed_vlm_angle == 90 else (rot_270_cw, 270)
-
         return (rot_270_cw, 270) if score_270 >= score_90 else (rot_90_cw, 90)
 
     # Case 2: Cropped card is already horizontal (landscape) -> Check if upside down (180°)
     rot_180 = cropped_img.transpose(Image.Transpose.ROTATE_180)
+    s0, s180, cnt = _detect_text_orientation_vote(cropped_img)
+    if cnt >= 2:
+        if s180 > s0 * 1.25:
+            return rot_180, 180
+        if s0 >= s180:
+            return cropped_img, 0
+
     score_0 = _score_red_header_top(cropped_img)
     score_180 = _score_red_header_top(rot_180)
 
@@ -757,78 +786,6 @@ def preprocess_identity_document_cv(
         return data_url, data_url, normalized_bytes, meta, False
 
 
-def segment_identity_document(
-    normalized_bytes: bytes,
-    vlm_bbox: Optional[Any] = None,
-    vlm_orientation: Optional[Any] = None
-) -> Tuple[Optional[str], Optional[str], SegmentationMetadata]:
-    """
-    Fallback segmentation using VLM bbox_2d / orientation_angle combined with CV refinement.
-    Returns (original_data_url, cropped_data_url, segmentation_metadata).
-    """
-    try:
-        with Image.open(io.BytesIO(normalized_bytes)) as img:
-            img = img.convert("RGB")
-            w, h = img.size
-            orig_dims = f"{w}x{h}"
-            original_data_url = _encode_preview_data_url(img)
-
-            chosen_bbox = _parse_vlm_bbox_to_pixels(vlm_bbox, w, h)
-            method = "vlm_grounding_bbox" if chosen_bbox is not None else "full_frame"
-
-            cv_bbox, cv_method = _detect_card_bbox_cv(img)
-            if chosen_bbox is None and cv_bbox is not None:
-                chosen_bbox = cv_bbox
-                method = cv_method
-            elif chosen_bbox is not None and cv_bbox is not None:
-                vlm_area = ((chosen_bbox[2] - chosen_bbox[0]) * (chosen_bbox[3] - chosen_bbox[1])) / float(w * h)
-                cv_area = ((cv_bbox[2] - cv_bbox[0]) * (cv_bbox[3] - cv_bbox[1])) / float(w * h)
-                if vlm_area > 0.94 and 0.12 <= cv_area < 0.90:
-                    chosen_bbox = cv_bbox
-                    method = f"hybrid_{cv_method}"
-
-            if chosen_bbox is None:
-                chosen_bbox = [0, 0, w, h]
-                cropped_img = img.copy()
-                detected = False
-            else:
-                xmin, ymin, xmax, ymax = chosen_bbox
-                cropped_img = img.crop((xmin, ymin, xmax, ymax))
-                crop_ratio = ((xmax - xmin) * (ymax - ymin)) / float(w * h)
-                detected = crop_ratio < 0.98
-
-            raw_cw, raw_ch = cropped_img.size
-            area_ratio = round((raw_cw * raw_ch) / float(w * h), 3)
-
-            cropped_img, rotation_deg = _auto_upright_cropped_card(cropped_img, vlm_orientation)
-            cw, ch = cropped_img.size
-            cropped_data_url = _encode_preview_data_url(cropped_img)
-
-            meta = SegmentationMetadata(
-                detected=detected or (rotation_deg != 0),
-                method=f"{method}+rot{rotation_deg}" if rotation_deg != 0 else method,
-                bbox=chosen_bbox,
-                original_dimensions=orig_dims,
-                cropped_dimensions=f"{cw}x{ch}",
-                crop_area_ratio=area_ratio,
-                rotation_applied_deg=rotation_deg,
-            )
-            return original_data_url, cropped_data_url, meta
-    except Exception:
-        dummy_b64 = base64.b64encode(normalized_bytes).decode("utf-8")
-        data_url = f"data:image/jpeg;base64,{dummy_b64}"
-        meta = SegmentationMetadata(
-            detected=False,
-            method="fallback",
-            bbox=[0, 0, 0, 0],
-            original_dimensions="N/A",
-            cropped_dimensions="N/A",
-            crop_area_ratio=1.0,
-            rotation_applied_deg=0,
-        )
-        return data_url, data_url, meta
-
-
 def extract_json_from_text(text: str) -> Dict[str, Any]:
     """Parse JSON from model response, handling markdown blocks if present."""
     text = text.strip()
@@ -848,15 +805,6 @@ def extract_json_from_text(text: str) -> Dict[str, Any]:
         return {"raw_text": text, "error": "Could not parse structured JSON"}
 
 
-def _is_text_only_model(model_name: str) -> bool:
-    """Return True if the Ollama model tag is a text-only LLM (cannot accept image inputs)."""
-    low = (model_name or "").strip().lower()
-    if not low:
-        return False
-    vision_markers = ("-vl", "vl:", "vision", "llava", "minicpm-v", "internvl", "moondream", "bakllava")
-    return not any(marker in low for marker in vision_markers)
-
-
 def _get_rapidocr_det() -> Any:
     """Lazy-load thread-safe singleton RapidOCR DBNet text detector (CPU ONNX)."""
     global _RAPIDOCR_DET, _RAPIDOCR_INIT_FAILED
@@ -874,13 +822,14 @@ def _get_rapidocr_det() -> Any:
 
             _RAPIDOCR_DET = RapidOCR(
                 use_det=True,
-                use_cls=False,
+                use_cls=True,
                 use_rec=False,
                 det_thresh=float(getattr(settings, "RAPIDOCR_DET_THRESH", 0.25)),
                 det_box_thresh=float(getattr(settings, "RAPIDOCR_DET_BOX_THRESH", 0.40)),
                 det_unclip_ratio=float(getattr(settings, "RAPIDOCR_DET_UNCLIP_RATIO", 1.55)),
+                cls_thresh=0.6,
             )
-            logger.info("Loaded RapidOCR TextDet ONNX model on CPU")
+            logger.info("Loaded RapidOCR TextDet + TextCls ONNX models on CPU")
             return _RAPIDOCR_DET
         except Exception as exc:
             logger.warning("RapidOCR TextDet initialization failed: %s", exc)
@@ -888,39 +837,7 @@ def _get_rapidocr_det() -> Any:
             return None
 
 
-def _get_vietocr_predictor() -> Any:
-    """Lazy-load thread-safe singleton VietOCR predictor (CPU)."""
-    global _VIETOCR_PREDICTOR, _VIETOCR_INIT_FAILED
-    if _VIETOCR_PREDICTOR is not None:
-        return _VIETOCR_PREDICTOR
-    if _VIETOCR_INIT_FAILED:
-        return None
-    with _VIETOCR_LOCK:
-        if _VIETOCR_PREDICTOR is not None:
-            return _VIETOCR_PREDICTOR
-        if _VIETOCR_INIT_FAILED:
-            return None
-        try:
-            if not hasattr(Image, "ANTIALIAS"):
-                Image.ANTIALIAS = Image.Resampling.LANCZOS  # type: ignore[attr-defined]
-            from vietocr.tool.config import Cfg
-            from vietocr.tool.predictor import Predictor
-
-            model_cfg = getattr(settings, "VIETOCR_MODEL_NAME", "vgg_transformer") or "vgg_transformer"
-            cfg = Cfg.load_config_from_name(model_cfg)
-            cfg["device"] = "cpu"
-            cfg["cnn"]["pretrained"] = False
-            cfg["predictor"]["beamsearch"] = False
-            _VIETOCR_PREDICTOR = Predictor(cfg)
-            logger.info("Loaded VietOCR '%s' predictor on CPU", model_cfg)
-            return _VIETOCR_PREDICTOR
-        except Exception as exc:
-            logger.warning("VietOCR initialization failed: %s", exc)
-            _VIETOCR_INIT_FAILED = True
-            return None
-
-
-def _sort_ocr_lines_y_center(lines: List[Dict[str, Any]], row_tolerance_px: float = 14.0) -> List[List[Dict[str, Any]]]:
+def _group_ocr_rows_y_center(lines: List[Dict[str, Any]], row_tolerance_px: float = 14.0) -> List[List[Dict[str, Any]]]:
     """Group OCR boxes into horizontal visual rows by y-center and sort left-to-right."""
     if not lines:
         return []
@@ -948,15 +865,53 @@ def _sort_ocr_lines_y_center(lines: List[Dict[str, Any]], row_tolerance_px: floa
     return grouped_rows
 
 
-def _format_ocr_rows_for_llm(lines: List[Dict[str, Any]]) -> str:
-    """Format y-center grouped VietOCR lines with horizontal coordinates for text-only LLM mapping."""
-    grouped_rows = _sort_ocr_lines_y_center(lines)
-    formatted = []
-    for idx, row in enumerate(grouped_rows, 1):
-        yc = int(round(sum((it["bbox"][1] + it["bbox"][3]) / 2.0 for it in row) / len(row)))
-        segs = " | ".join(f"[x={it['bbox'][0]}..{it['bbox'][2]}] {it['text']}" for it in row)
-        formatted.append(f"L{idx:02d}(y={yc}): {segs}")
-    return "\n".join(formatted)
+def _sort_ocr_lines_y_center(
+    lines: List[Dict[str, Any]],
+    row_tolerance_px: float = 14.0,
+    img_width: Optional[int] = None,
+    img_height: Optional[int] = None,
+) -> List[List[Dict[str, Any]]]:
+    """
+    Group OCR boxes into horizontal visual rows by y-center and sort left-to-right.
+    When card dimensions are provided and a 2-column portrait-sidebar layout is detected
+    (e.g., CCCD/CMND/GPLX with 'Có giá trị đến / Date of expiry' tucked under the left portrait
+    alongside bottom-right 'Nơi thường trú' lines), keep that bottom-left sidebar block as a
+    separate trailing column so it neither interleaves nor stitches onto residence lines.
+    """
+    if not lines:
+        return []
+    if not img_width or not img_height or img_width <= 0 or img_height <= 0:
+        return _group_ocr_rows_y_center(lines, row_tolerance_px=row_tolerance_px)
+
+    w = float(img_width)
+    h = float(img_height)
+    right_col_items = [it for it in lines if it["bbox"][0] >= 0.23 * w]
+    has_right_main_col = sum(1 for it in right_col_items if it["bbox"][0] <= 0.45 * w) >= 4
+    if not has_right_main_col:
+        return _group_ocr_rows_y_center(lines, row_tolerance_px=row_tolerance_px)
+
+    main_items: List[Dict[str, Any]] = []
+    left_sidebar_items: List[Dict[str, Any]] = []
+    for it in lines:
+        x1, y1, x2, y2 = it["bbox"]
+        yc = (y1 + y2) / 2.0
+        in_bottom_left = (x1 <= 0.16 * w) and (x2 <= 0.28 * w) and (yc > 0.50 * h)
+        if in_bottom_left:
+            has_adjacent_right = any(
+                abs(((r["bbox"][1] + r["bbox"][3]) / 2.0) - yc) <= row_tolerance_px * 1.5
+                and (r["bbox"][0] - x2) < 0.05 * w
+                for r in right_col_items
+            )
+            if not has_adjacent_right:
+                left_sidebar_items.append(it)
+                continue
+        main_items.append(it)
+
+    if not left_sidebar_items:
+        return _group_ocr_rows_y_center(lines, row_tolerance_px=row_tolerance_px)
+    return _group_ocr_rows_y_center(main_items, row_tolerance_px=row_tolerance_px) + _group_ocr_rows_y_center(
+        left_sidebar_items, row_tolerance_px=row_tolerance_px
+    )
 
 
 def _format_paddle_ocr_lines_for_llm(lines: List[Dict[str, Any]]) -> str:
@@ -1004,31 +959,6 @@ def _detect_text_boxes_bgr(image_bytes: bytes, box_pad_px: int = 2) -> Tuple[np.
             continue
         raw_items.append({"bbox": [x1, y1, x2, y2], "crop_rgb": img_bgr[y1:y2, x1:x2, ::-1]})
     return img_bgr, raw_items, det_ms
-
-
-def _extract_text_lines_vietocr(image_bytes: bytes) -> Tuple[List[Dict[str, Any]], float, float]:
-    """
-    Run RapidOCR DBNet text detection + VietOCR recognition on the cropped/upright card image.
-    Returns (sorted_lines, det_ms, vietocr_ms).
-    """
-    vietocr = _get_vietocr_predictor()
-    if vietocr is None or cv2 is None:
-        raise RuntimeError("RapidOCR hoặc VietOCR chưa sẵn sàng")
-
-    _, raw_items, det_ms = _detect_text_boxes_bgr(image_bytes, box_pad_px=2)
-
-    t_viet0 = time.perf_counter()
-    recognized_items: List[Dict[str, Any]] = []
-    for item in raw_items:
-        crop_pil = Image.fromarray(item["crop_rgb"])
-        txt = vietocr.predict(crop_pil)
-        if isinstance(txt, str) and txt.strip():
-            recognized_items.append({"bbox": item["bbox"], "text": txt.strip()})
-    vietocr_ms = round((time.perf_counter() - t_viet0) * 1000.0, 1)
-
-    grouped = _sort_ocr_lines_y_center(recognized_items)
-    sorted_lines = [item for row in grouped for item in row]
-    return sorted_lines, det_ms, vietocr_ms
 
 
 def _build_paddleocr_vl_row_canvas(row: List[Dict[str, Any]], min_row_height: int = 48, gap_x: int = 14) -> np.ndarray:
@@ -1088,7 +1018,7 @@ def _call_paddleocr_vl_ollama(img_pil: Image.Image, model_name: str, num_predict
             "num_predict": num_predict,
         },
     }
-    chat_url = f"{settings.OLLAMA_BASE_URL.rstrip('/')}/api/chat"
+    chat_url = f"{_get_ollama_base_url()}/api/chat"
     req = urllib.request.Request(
         chat_url,
         data=json.dumps(payload).encode("utf-8"),
@@ -1134,8 +1064,8 @@ def _extract_text_lines_paddleocr_vl(
     min_row_h = int(getattr(settings, "PADDLEOCR_VL_STRIP_MIN_ROW_HEIGHT", 48) or 48)
 
     img_bgr, raw_items, det_ms = _detect_text_boxes_bgr(image_bytes, box_pad_px=3)
-    h = img_bgr.shape[0]
-    rows = _sort_ocr_lines_y_center(raw_items)
+    h, w = img_bgr.shape[:2]
+    rows = _sort_ocr_lines_y_center(raw_items, img_width=w, img_height=h)
 
     t_ocr0 = time.perf_counter()
     if rows:
@@ -1245,7 +1175,7 @@ def _postprocess_hybrid_extracted_data(data: Dict[str, Any], lines: List[Dict[st
             addr_val = data.get(addr_field)
             if isinstance(addr_val, str):
                 cleaned_addr = re.sub(
-                    r"^(?:quê\s*qu[aáả]n|nguy[eê]n\s*qu[aáả]n|n[ơo]i\s*đkhk\s*th[ưư][ơờ]ng\s*tr[uúủ]|n[ơo]i\s*th[ưư][ơờ]ng\s*tr[uúủ]|n[ơo]i\s*c[ưư]\s*tr[uúủ])\s*[:;,\-]?\s*",
+                    r"^(?:(?:quê\s*qu[aáảà]n|nguy[eê]n\s*qu[aáảà]n|n[ơo]i\s*đkhk\s*th[ưư][ơờ]ng\s*tr[uúủù]|n[ơo]i\s*th[ưư][ơờ]ng\s*tr[uúủù]|n[ơo]i\s*c[ưư]\s*tr[uúủù])(?:\s*/\s*place\s*of\s*(?:origin|residence))?|/?\s*place\s*of\s*(?:origin|residence))\s*[:;,\-]?\s*",
                     "",
                     addr_val.strip(),
                     flags=re.IGNORECASE,
@@ -1257,11 +1187,9 @@ def _postprocess_hybrid_extracted_data(data: Dict[str, Any], lines: List[Dict[st
 
 class OCREngineService:
     @staticmethod
-    def check_hybrid_components_ready() -> Tuple[bool, bool]:
-        """Check whether RapidOCR TextDet and VietOCR can be loaded."""
-        det_ok = _get_rapidocr_det() is not None
-        viet_ok = _get_vietocr_predictor() is not None
-        return det_ok, viet_ok
+    def check_rapidocr_ready() -> bool:
+        """Check whether RapidOCR TextDet can be loaded."""
+        return _get_rapidocr_det() is not None
 
     @staticmethod
     def check_paddleocr_vl_ready(installed_models: Optional[List[str]] = None) -> bool:
@@ -1277,7 +1205,7 @@ class OCREngineService:
     @staticmethod
     def check_ollama_health() -> Tuple[bool, str]:
         """Check if Ollama server is up and responsive."""
-        base_url = settings.OLLAMA_BASE_URL.rstrip("/")
+        base_url = _get_ollama_base_url()
         try:
             req = urllib.request.Request(f"{base_url}/")
             with urllib.request.urlopen(req, timeout=3) as resp:
@@ -1290,7 +1218,7 @@ class OCREngineService:
     @staticmethod
     def get_installed_models() -> List[str]:
         """Query Ollama /api/tags for locally installed models."""
-        base_url = settings.OLLAMA_BASE_URL.rstrip("/")
+        base_url = _get_ollama_base_url()
         try:
             req = urllib.request.Request(f"{base_url}/api/tags")
             with urllib.request.urlopen(req, timeout=3) as resp:
@@ -1312,7 +1240,7 @@ class OCREngineService:
     @staticmethod
     def get_loaded_models() -> List[Dict[str, Any]]:
         """Query Ollama /api/ps for models currently loaded in VRAM/RAM."""
-        base_url = settings.OLLAMA_BASE_URL.rstrip("/")
+        base_url = _get_ollama_base_url()
         try:
             req = urllib.request.Request(f"{base_url}/api/ps")
             with urllib.request.urlopen(req, timeout=3) as resp:
@@ -1331,7 +1259,7 @@ class OCREngineService:
 
     @staticmethod
     def build_available_models(installed_models: List[str]) -> List[VLMModelOption]:
-        """Merge recommended 4GB/standard VLM presets with locally installed Ollama models."""
+        """Merge active Hybrid OCR model presets with locally installed Ollama models."""
         installed_set = set(installed_models)
         options: List[VLMModelOption] = []
         seen = set()
@@ -1364,20 +1292,6 @@ class OCREngineService:
             )
             seen.add(settings.OLLAMA_TEXT_MODEL)
 
-        if settings.OLLAMA_MODEL not in seen:
-            options.insert(
-                0,
-                VLMModelOption(
-                    name=settings.OLLAMA_MODEL,
-                    label=f"{settings.OLLAMA_MODEL} (Cấu hình mặc định)",
-                    vram_estimate="Custom",
-                    tier="custom",
-                    mode="vlm",
-                    installed=(settings.OLLAMA_MODEL in installed_set),
-                ),
-            )
-            seen.add(settings.OLLAMA_MODEL)
-
         for name in installed_models:
             base_name = name[:-7] if name.endswith(":latest") else name
             if name not in seen and base_name not in seen:
@@ -1387,7 +1301,7 @@ class OCREngineService:
                         label=f"{name} (Đã cài trên Ollama)",
                         vram_estimate="Local",
                         tier="installed",
-                        mode="hybrid" if _is_text_only_model(name) else "both",
+                        mode="hybrid",
                         installed=True,
                     )
                 )
@@ -1436,6 +1350,11 @@ class OCREngineService:
         if lic.status != LicenseStatus.ACTIVE:
             raise BadRequestException(f"License '{lic.id}' is currently {lic.status}. Cannot execute OCR jobs.")
 
+        if lic.expires_at:
+            exp = lic.expires_at.replace(tzinfo=timezone.utc) if lic.expires_at.tzinfo is None else lic.expires_at
+            if exp < utc_now():
+                raise BadRequestException(f"License '{lic.masked_key}' has expired.")
+
         balance = db.query(UsageBalance).filter(UsageBalance.license_id == lic.id).first()
         if not balance:
             raise BadRequestException(f"No quota balance provisioned for License '{lic.id}'")
@@ -1456,38 +1375,18 @@ class OCREngineService:
         license_id: Optional[str] = None,
         api_key_secret_hash: Optional[str] = None,
         model_name: Optional[str] = None,
-        pipeline_mode: Optional[str] = None,
     ) -> OCRExtractionResponse:
         """
-        Execute identity OCR pipeline (Hybrid VietOCR, Hybrid PaddleOCR-VL-Vi, or Pure VLM):
+        Execute Hybrid Identity OCR pipeline:
           1. Resolve license & verify quota.
           2. Normalize image bytes.
           3. CV crop & upright rotation via DocAligner + OpenCV warpPerspective.
-          4a. Hybrid mode (default): RapidOCR TextDet + VietOCR (CPU) -> Text-only LLM JSON mapping.
-          4b. Hybrid PaddleOCR-VL mode: RapidOCR TextDet + PaddleOCR-VL-Vi (Ollama GPU) -> Text-only LLM JSON mapping.
-          4c. VLM mode: Send cropped image to Ollama VLM for direct extraction.
-          5. Apply deterministic post-processing guardrails (in hybrid modes) or VLM bbox fallback.
+          4. RapidOCR TextDet + PaddleOCR-VL-Vi (Ollama GPU) -> Text-only LLM JSON mapping.
+          5. Apply deterministic post-processing guardrails.
           6. Deduct quota & record usage ledger.
         """
-        raw_mode = (pipeline_mode or getattr(settings, "OCR_PIPELINE_MODE", "hybrid") or "hybrid").strip().lower()
-        if raw_mode in ("hybrid_paddle_vl", "paddleocr_vl", "paddle_vl", "hybrid-paddle-vl"):
-            requested_mode = "hybrid_paddle_vl"
-        elif raw_mode in ("hybrid", "vlm"):
-            requested_mode = raw_mode
-        else:
-            requested_mode = "hybrid"
-
         requested_model = (model_name or "").strip()
         is_paddle_vl_model = requested_model.lower().startswith("paddleocr-vl")
-        if requested_model:
-            if is_paddle_vl_model:
-                requested_mode = "hybrid_paddle_vl"
-            elif _is_text_only_model(requested_model):
-                if requested_mode == "vlm":
-                    requested_mode = "hybrid"
-            elif pipeline_mode is None:
-                requested_mode = "vlm"
-
         # 1. Resolve license & verify quota
         lic, balance = OCREngineService.resolve_license_and_balance(
             db=db,
@@ -1510,111 +1409,62 @@ class OCREngineService:
         docaligner_ms = round((time.perf_counter() - t_doc0) * 1000.0, 1)
         stage_timings_ms: Dict[str, float] = {"docaligner_ms": docaligner_ms}
 
-        use_hybrid = requested_mode in ("hybrid", "hybrid_paddle_vl")
-        use_paddle_vl = requested_mode == "hybrid_paddle_vl"
         ocr_lines: List[Dict[str, Any]] = []
 
-        if use_paddle_vl:
-            effective_paddle_model = requested_model if is_paddle_vl_model else getattr(settings, "PADDLEOCR_VL_MODEL", "paddleocr-vl-vi")
-            try:
-                ocr_lines, det_ms, paddle_ms = _extract_text_lines_paddleocr_vl(
-                    vlm_input_bytes,
-                    paddle_model=effective_paddle_model,
-                )
-                stage_timings_ms["text_det_ms"] = det_ms
-                stage_timings_ms["paddleocr_vl_ms"] = paddle_ms
-            except urllib.error.HTTPError as e:
-                err_detail = ""
-                try:
-                    err_body = e.read().decode("utf-8", errors="ignore")
-                    err_json = json.loads(err_body)
-                    err_detail = err_json.get("error", err_body)
-                except Exception:
-                    err_detail = str(e)
-                raise BadRequestException(
-                    f"Ollama PaddleOCR-VL báo lỗi xử lý ảnh (HTTP {e.code}, model='{effective_paddle_model}'): {err_detail}."
-                )
-            except urllib.error.URLError as e:
-                raise BadRequestException(
-                    f"Không thể kết nối đến Ollama Server tại {settings.OLLAMA_BASE_URL} ({e}). Hãy đảm bảo Ollama đang chạy."
-                )
-            except Exception as exc:
-                raise BadRequestException(f"Lỗi thực thi PaddleOCR-VL ({effective_paddle_model}): {exc}")
-        elif use_hybrid:
-            try:
-                ocr_lines, det_ms, vietocr_ms = _extract_text_lines_vietocr(vlm_input_bytes)
-                stage_timings_ms["text_det_ms"] = det_ms
-                stage_timings_ms["vietocr_ms"] = vietocr_ms
-            except Exception as exc:
-                if requested_model and _is_text_only_model(requested_model):
-                    raise BadRequestException(f"Lỗi khởi tạo hoặc thực thi VietOCR/TextDet: {exc}")
-                logger.warning("Hybrid VietOCR stage unavailable (%s), falling back to Pure VLM mode", exc)
-                use_hybrid = False
-
-        if use_hybrid:
-            if requested_model and not is_paddle_vl_model and (
-                _is_text_only_model(requested_model) or not use_paddle_vl
-            ):
-                effective_model = requested_model
-            else:
-                effective_model = getattr(settings, "OLLAMA_TEXT_MODEL", "qwen2.5:3b")
-
-            rows_text = (
-                _format_paddle_ocr_lines_for_llm(ocr_lines)
-                if use_paddle_vl
-                else _format_ocr_rows_for_llm(ocr_lines)
+        effective_paddle_model = requested_model if is_paddle_vl_model else getattr(settings, "PADDLEOCR_VL_MODEL", "paddleocr-vl-vi")
+        try:
+            ocr_lines, det_ms, paddle_ms = _extract_text_lines_paddleocr_vl(
+                vlm_input_bytes,
+                paddle_model=effective_paddle_model,
             )
-            source_label = "Các dòng PaddleOCR-VL" if use_paddle_vl else "Các dòng VietOCR"
-            payload = {
-                "model": effective_model,
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT_HYBRID_OCR_JSON_MAPPER},
-                    {
-                        "role": "user",
-                        "content": (
-                            f"Kích thước ảnh thẻ: {seg_meta.cropped_dimensions}\n"
-                            f"{source_label}:\n{rows_text if rows_text else '(Không phát hiện được dòng chữ)'}"
-                        ),
-                    },
-                ],
-                "stream": False,
-                "format": "json",
-                "options": {
-                    "temperature": 0.0,
-                    "num_ctx": min(settings.OLLAMA_NUM_CTX, 2048),
-                    "num_predict": min(settings.OLLAMA_NUM_PREDICT, 768),
-                },
-            }
-        else:
-            effective_model = requested_model or settings.OLLAMA_MODEL
-            b64_image = base64.b64encode(vlm_input_bytes).decode("utf-8")
-            if cv_cropped:
-                system_prompt = SYSTEM_PROMPT_IDENTITY_OCR_CROPPED
-                user_prompt = (
-                    "Ảnh đã được cắt sát vùng thẻ và xoay thẳng chiều đọc chuẩn. "
-                    "Hãy nhận diện loại giấy tờ và trích xuất toàn bộ thông tin theo đúng định dạng JSON yêu cầu."
-                )
-            else:
-                system_prompt = SYSTEM_PROMPT_IDENTITY_OCR
-                user_prompt = (
-                    "Hãy định vị vùng chứa thẻ giấy tờ tùy thân (bbox_2d: [xmin, ymin, xmax, ymax]), "
-                    "xác định góc xoay (orientation_angle) và trích xuất toàn bộ thông tin theo đúng định dạng JSON yêu cầu."
-                )
-            payload = {
-                "model": effective_model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt, "images": [b64_image]},
-                ],
-                "stream": False,
-                "options": {
-                    "temperature": 0.0,
-                    "num_ctx": settings.OLLAMA_NUM_CTX,
-                    "num_predict": settings.OLLAMA_NUM_PREDICT,
-                },
-            }
+            stage_timings_ms["text_det_ms"] = det_ms
+            stage_timings_ms["paddleocr_vl_ms"] = paddle_ms
+        except urllib.error.HTTPError as e:
+            err_detail = ""
+            try:
+                err_body = e.read().decode("utf-8", errors="ignore")
+                err_json = json.loads(err_body)
+                err_detail = err_json.get("error", err_body)
+            except Exception:
+                err_detail = str(e)
+            raise BadRequestException(
+                f"Ollama PaddleOCR-VL báo lỗi xử lý ảnh (HTTP {e.code}, model='{effective_paddle_model}'): {err_detail}."
+            )
+        except urllib.error.URLError as e:
+            raise BadRequestException(
+                f"Không thể kết nối đến Ollama Server tại {settings.OLLAMA_BASE_URL} ({e}). Hãy đảm bảo Ollama đang chạy."
+            )
+        except Exception as exc:
+            raise BadRequestException(f"Lỗi thực thi PaddleOCR-VL ({effective_paddle_model}): {exc}")
 
-        chat_url = f"{settings.OLLAMA_BASE_URL.rstrip('/')}/api/chat"
+        if requested_model and not is_paddle_vl_model:
+            effective_model = requested_model
+        else:
+            effective_model = getattr(settings, "OLLAMA_TEXT_MODEL", "qwen2.5:3b")
+
+        rows_text = _format_paddle_ocr_lines_for_llm(ocr_lines)
+        payload = {
+            "model": effective_model,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT_HYBRID_OCR_JSON_MAPPER},
+                {
+                    "role": "user",
+                    "content": (
+                        f"Kích thước ảnh thẻ: {seg_meta.cropped_dimensions}\n"
+                        f"Các dòng PaddleOCR-VL:\n{rows_text if rows_text else '(Không phát hiện được dòng chữ)'}"
+                    ),
+                },
+            ],
+            "stream": False,
+            "format": "json",
+            "options": {
+                "temperature": 0.0,
+                "num_ctx": min(settings.OLLAMA_NUM_CTX, 2048),
+                "num_predict": min(settings.OLLAMA_NUM_PREDICT, 768),
+            },
+        }
+
+        chat_url = f"{_get_ollama_base_url()}/api/chat"
         t_llm0 = time.perf_counter()
         try:
             req = urllib.request.Request(
@@ -1643,40 +1493,37 @@ class OCREngineService:
             raise BadRequestException(f"Lỗi khi thực thi mô hình VLM '{effective_model}': {str(e)}")
 
         llm_ms = round((time.perf_counter() - t_llm0) * 1000.0, 1)
-        stage_timings_ms["llm_map_ms" if use_hybrid else "vlm_ms"] = llm_ms
+        stage_timings_ms["llm_map_ms"] = llm_ms
         execution_time_ms = int(round(sum(stage_timings_ms.values())))
         raw_content = resp_data.get("message", {}).get("content", "")
         extracted_data = extract_json_from_text(raw_content)
-        if use_hybrid:
-            extracted_data = _postprocess_hybrid_extracted_data(extracted_data, ocr_lines)
+        extracted_data = _postprocess_hybrid_extracted_data(extracted_data, ocr_lines)
+        extracted_data.pop("bbox_2d", None)
+        extracted_data.pop("document_bbox", None)
+        extracted_data.pop("orientation_angle", None)
 
-        # 5. Remove coordinate/orientation helper keys from extracted fields;
-        #    only apply VLM bbox fallback in VLM mode when CV fell back to full_frame.
-        vlm_bbox = extracted_data.pop("bbox_2d", None) or extracted_data.pop("document_bbox", None)
-        vlm_orientation = extracted_data.pop("orientation_angle", None)
-        if (
-            not use_hybrid
-            and not cv_cropped
-            and seg_meta.method != "fallback"
-            and (vlm_bbox is not None or vlm_orientation is not None)
-        ):
-            orig_url, cropped_url, seg_meta = segment_identity_document(
-                normalized_bytes,
-                vlm_bbox,
-                vlm_orientation,
-            )
-
-        seg_meta.pipeline_mode = "hybrid_paddle_vl" if use_paddle_vl else ("hybrid" if use_hybrid else "vlm")
+        seg_meta.pipeline_mode = "hybrid_paddle_vl"
         seg_meta.ocr_lines_count = len(ocr_lines)
         seg_meta.stage_timings_ms = stage_timings_ms
 
         detected_type = extracted_data.get("document_type", "identity_document")
-        job_id = f"JOB-{int(time.time() * 1000) % 1000000:06d}"
+        job_id = _generate_unique_job_id(db)
+        now = utc_now()
+        service_name = lic.service.name if lic.service else "ID Document & Passport OCR"
+        owner_user_id = user.id if user else lic.user_id
+        orig_rel_path, cropped_rel_path = _persist_job_images_to_disk(
+            job_id,
+            orig_url,
+            cropped_url,
+            orig_fallback=normalized_bytes,
+            cropped_fallback=vlm_input_bytes,
+        )
+        image_access_token = secrets.token_urlsafe(24)
 
         # 6. Atomic Quota Deduction & Ledger Logging
         balance.used_quota += 1
         balance.remaining_quota = max(0, balance.total_quota - balance.used_quota)
-        balance.updated_at = utc_now()
+        balance.updated_at = now
 
         rec = UsageRecord(
             license_id=lic.id,
@@ -1686,7 +1533,7 @@ class OCREngineService:
             amount=1,
             quota_type=balance.quota_type or QuotaType.PAGE,
             unit_cost=1.0,
-            created_at=utc_now()
+            created_at=now
         )
         db.add(rec)
 
@@ -1697,14 +1544,44 @@ class OCREngineService:
             entry_type=LedgerEntryType.DEBIT_USAGE,
             reference_type="job",
             reference_id=job_id,
-            created_at=utc_now()
+            created_at=now
         )
         db.add(ledger)
 
+        ext_lower = (file_name or "").lower()
+        file_type = "PDF" if ext_lower.endswith(".pdf") else "IMAGE"
+        job_record = OCRJobRecord(
+            job_id=job_id,
+            user_id=owner_user_id,
+            license_id=lic.id,
+            service_id=lic.service_id,
+            service_name=service_name,
+            file_name=file_name,
+            file_size_bytes=len(image_bytes or b""),
+            file_type=file_type,
+            detected_type=detected_type,
+            status="completed",
+            confidence_score=99.2,
+            execution_time_ms=execution_time_ms,
+            extracted_data_json=json.dumps(extracted_data, ensure_ascii=False),
+            segmentation_info_json=seg_meta.model_dump_json(),
+            original_image_path=orig_rel_path,
+            cropped_image_path=cropped_rel_path,
+            image_access_token=image_access_token,
+            created_at=now,
+        )
+        db.add(job_record)
+
+        if api_key_secret_hash:
+            used_cred = db.query(APICredential).filter(
+                APICredential.secret_hash == api_key_secret_hash,
+                APICredential.status == CredentialStatus.ACTIVE,
+            ).first()
+            if used_cred:
+                used_cred.last_used_at = now
+
         db.commit()
         db.refresh(balance)
-
-        service_name = lic.service.name if lic.service else "ID Document & Passport OCR"
 
         return OCRExtractionResponse(
             job_id=job_id,
@@ -1722,5 +1599,116 @@ class OCREngineService:
             segmentation_info=seg_meta,
             quota_used=1,
             remaining_quota=balance.remaining_quota,
-            created_at=utc_now().isoformat()
+            created_at=now.isoformat()
         )
+
+    @staticmethod
+    def list_user_jobs(db: Session, user_id: str, limit: int = 100) -> List[OCRJobHistoryItem]:
+        rows = (
+            db.query(OCRJobRecord)
+            .filter(OCRJobRecord.user_id == user_id)
+            .order_by(OCRJobRecord.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+        storage_root = pathlib.Path(settings.OCR_STORAGE_DIR).resolve()
+        items: List[OCRJobHistoryItem] = []
+        for row in rows:
+            extracted_data: Dict[str, Any] = {}
+            if row.extracted_data_json:
+                try:
+                    parsed = json.loads(row.extracted_data_json)
+                    if isinstance(parsed, dict):
+                        extracted_data = parsed
+                except Exception:
+                    extracted_data = {}
+
+            seg_info: Optional[SegmentationMetadata] = None
+            if row.segmentation_info_json:
+                try:
+                    seg_info = SegmentationMetadata(**json.loads(row.segmentation_info_json))
+                except Exception:
+                    seg_info = None
+
+            orig_url: Optional[str] = None
+            if row.original_image_path:
+                try:
+                    p = (storage_root / row.original_image_path).resolve()
+                    p.relative_to(storage_root)
+                    if p.is_file():
+                        orig_url = f"/api/v1/ocr/jobs/{row.job_id}/image/original?t={row.image_access_token}"
+                except Exception:
+                    orig_url = None
+
+            cropped_url: Optional[str] = None
+            if row.cropped_image_path:
+                try:
+                    p = (storage_root / row.cropped_image_path).resolve()
+                    p.relative_to(storage_root)
+                    if p.is_file():
+                        cropped_url = f"/api/v1/ocr/jobs/{row.job_id}/image/cropped?t={row.image_access_token}"
+                except Exception:
+                    cropped_url = None
+
+            items.append(
+                OCRJobHistoryItem(
+                    job_id=row.job_id,
+                    status=row.status,
+                    file_name=row.file_name,
+                    file_size=_format_file_size(row.file_size_bytes or 0),
+                    file_type=row.file_type or "IMAGE",
+                    detected_type=row.detected_type or "identity_document",
+                    service_id=row.service_id,
+                    service_name=row.service_name or "ID Document & Passport OCR",
+                    license_id=row.license_id,
+                    confidence_score=row.confidence_score if row.confidence_score is not None else 99.2,
+                    execution_time_ms=row.execution_time_ms or 0,
+                    extracted_data=extracted_data,
+                    original_image_url=orig_url,
+                    cropped_image_url=cropped_url,
+                    segmentation_info=seg_info,
+                    created_at=row.created_at.isoformat() if row.created_at else utc_now().isoformat(),
+                )
+            )
+        return items
+
+    @staticmethod
+    def resolve_job_image_path(
+        db: Session,
+        job_id: str,
+        kind: str,
+        access_token: Optional[str] = None,
+        user: Optional[User] = None,
+    ) -> pathlib.Path:
+        if kind not in ("original", "cropped"):
+            raise BadRequestException("Loại ảnh không hợp lệ (chỉ hỗ trợ 'original' hoặc 'cropped').")
+
+        job = db.query(OCRJobRecord).filter(OCRJobRecord.job_id == job_id).first()
+        if not job:
+            raise EntityNotFoundException("OCRJob", job_id)
+
+        token_ok = bool(
+            access_token
+            and job.image_access_token
+            and hmac.compare_digest(access_token, job.image_access_token)
+        )
+        user_ok = bool(user and (user.id == job.user_id or user.role == UserRole.PLATFORM_ADMIN))
+        if not (token_ok or user_ok):
+            if user is None and not access_token:
+                raise UnauthorizedException("Yêu cầu xác thực để truy cập hình ảnh OCR.")
+            raise ForbiddenException("Bạn không có quyền truy cập hình ảnh của job này.")
+
+        rel_path = job.original_image_path if kind == "original" else job.cropped_image_path
+        if not rel_path:
+            raise EntityNotFoundException("OCRJobImage", f"{job_id}/{kind}")
+
+        storage_root = pathlib.Path(settings.OCR_STORAGE_DIR).resolve()
+        target = (storage_root / rel_path).resolve()
+        try:
+            target.relative_to(storage_root)
+        except ValueError:
+            raise ForbiddenException("Đường dẫn ảnh không hợp lệ.")
+
+        if not target.is_file():
+            raise EntityNotFoundException("OCRJobImage", f"{job_id}/{kind}")
+        return target

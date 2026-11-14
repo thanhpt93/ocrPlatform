@@ -28,3 +28,6 @@ dist-ssr
 models/
 segment_test/
 segment_test_output/
+
+# Persistent OCR job images
+storage/

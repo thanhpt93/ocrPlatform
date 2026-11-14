@@ -14,12 +14,31 @@ class UsageBalanceResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+class CustomerDailyUsagePoint(BaseModel):
+    date: str
+    units: int
+    jobs: int
+
+class CustomerServiceBreakdownPoint(BaseModel):
+    service_id: str
+    service_name: str
+    usage_units: int
+    jobs_count: int
+    subscriptions_count: int
+    licenses_count: int
+    percentage: float
+
 class UsageSummaryResponse(BaseModel):
     total_quota: int
     used_quota: int
     remaining_quota: int
     active_licenses: int
+    active_subscriptions: int = 0
+    total_jobs: int = 0
+    avg_latency_ms: float = 0.0
     balances: List[UsageBalanceResponse] = []
+    daily_usage: List[CustomerDailyUsagePoint] = []
+    service_breakdown: List[CustomerServiceBreakdownPoint] = []
 
 class UsageRecordResponse(BaseModel):
     id: str

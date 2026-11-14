@@ -7,6 +7,7 @@ from app.common.models.subscriptions import Subscription, SubscriptionEvent
 from app.common.models.licenses import License, LicenseEntitlement, LicenseEvent
 from app.common.models.credentials import APICredential
 from app.common.models.usage import UsageBalance, UsageReservation, UsageRecord, UsageLedger
+from app.common.models.ocr_jobs import OCRJobRecord
 from app.common.models.audit import AuditLog
 
 __all__ = [
@@ -36,5 +37,6 @@ __all__ = [
     "UsageReservation",
     "UsageRecord",
     "UsageLedger",
+    "OCRJobRecord",
     "AuditLog"
 ]

@@ -1,5 +1,6 @@
-from typing import Optional
-from fastapi import APIRouter, Depends, UploadFile, File, Form, Header, HTTPException, status
+from typing import List, Optional
+from fastapi import APIRouter, Depends, UploadFile, File, Form, Header, HTTPException, Query, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -9,7 +10,7 @@ from app.core.security import decode_token, hash_secret
 from app.common.models.users import User
 from app.common.models.credentials import APICredential
 from app.common.enums import UserStatus, CredentialStatus
-from app.common.schemas.ocr_engine import OCRExtractionResponse, VLMHealthResponse
+from app.common.schemas.ocr_engine import OCRExtractionResponse, OCRJobHistoryItem, VLMHealthResponse
 from app.modules.ocr_engine.service import OCREngineService
 
 router = APIRouter(prefix="/ocr", tags=["OCR Engine"])
@@ -36,6 +37,11 @@ def get_auth_context(
                 detail="Khóa API (X-API-Key) không hợp lệ hoặc đã bị thu hồi"
             )
         user = cred.user
+        if not user or user.status != UserStatus.ACTIVE:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Tài khoản sở hữu khóa API đã bị vô hiệu hóa"
+            )
         return user, api_key_hash
 
     if credentials and credentials.credentials:
@@ -53,25 +59,37 @@ def get_auth_context(
     )
 
 
+def get_optional_auth_user(
+    credentials = Depends(security_scheme),
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    if credentials and credentials.credentials:
+        payload = decode_token(credentials.credentials)
+        if payload and payload.get("type") == "access":
+            user_id = payload.get("sub")
+            user = db.query(User).filter(User.id == user_id).first()
+            if user and user.status == UserStatus.ACTIVE:
+                return user
+    return None
+
+
 @router.get("/health", response_model=VLMHealthResponse)
 def check_vlm_health():
     is_up, status_str = OCREngineService.check_ollama_health()
     installed_models = OCREngineService.get_installed_models() if is_up else []
     available_models = OCREngineService.build_available_models(installed_models)
-    det_ready, vietocr_ready = OCREngineService.check_hybrid_components_ready()
+    det_ready = OCREngineService.check_rapidocr_ready()
     paddleocr_vl_model = getattr(settings, "PADDLEOCR_VL_MODEL", "paddleocr-vl-vi")
     paddleocr_vl_ready = OCREngineService.check_paddleocr_vl_ready(installed_models)
-    pipeline_mode = getattr(settings, "OCR_PIPELINE_MODE", "hybrid")
+    pipeline_mode = "hybrid_paddle_vl"
     hybrid_llm_model = getattr(settings, "OLLAMA_TEXT_MODEL", "qwen2.5:3b")
-    active_model = hybrid_llm_model if pipeline_mode in ("hybrid", "hybrid_paddle_vl") else settings.OLLAMA_MODEL
     return VLMHealthResponse(
         ollama_status=status_str,
-        active_model=active_model,
+        active_model=hybrid_llm_model,
         pipeline_mode=pipeline_mode,
         hybrid_llm_model=hybrid_llm_model,
         paddleocr_vl_model=paddleocr_vl_model,
         paddleocr_vl_ready=paddleocr_vl_ready,
-        vietocr_ready=vietocr_ready,
         rapidocr_ready=det_ready,
         gpu_accelerated=True,
         ollama_base_url=settings.OLLAMA_BASE_URL,
@@ -84,11 +102,7 @@ def check_vlm_health():
 async def process_identity_document(
     file: UploadFile = File(..., description="File ảnh tài liệu (PNG, JPG, JPEG, WEBP)"),
     license_id: Optional[str] = Form(None, description="Mã License cụ thể (tùy chọn)"),
-    model_name: Optional[str] = Form(None, description="Tên mô hình LLM/VLM (tùy chọn)"),
-    pipeline_mode: Optional[str] = Form(
-        None,
-        description="Chế độ pipeline: 'hybrid' (DocAligner+VietOCR+LLM), 'hybrid_paddle_vl' (DocAligner+PaddleOCR-VL-Vi+LLM), hoặc 'vlm'"
-    ),
+    model_name: Optional[str] = Form(None, description="Tên mô hình Text LLM chuẩn hóa JSON (tùy chọn)"),
     auth_ctx = Depends(get_auth_context),
     db: Session = Depends(get_db)
 ):
@@ -118,5 +132,41 @@ async def process_identity_document(
         license_id=license_id,
         api_key_secret_hash=api_key_hash,
         model_name=model_name,
-        pipeline_mode=pipeline_mode,
+    )
+
+
+@router.get("/jobs", response_model=List[OCRJobHistoryItem])
+def list_ocr_jobs(
+    limit: int = Query(100, ge=1, le=500),
+    auth_ctx = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+):
+    user, _ = auth_ctx
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Không xác định được người dùng cho lịch sử OCR.",
+        )
+    return OCREngineService.list_user_jobs(db=db, user_id=user.id, limit=limit)
+
+
+@router.get("/jobs/{job_id}/image/{kind}")
+def get_ocr_job_image(
+    job_id: str,
+    kind: str,
+    t: Optional[str] = Query(None, description="Per-job signed image access token"),
+    user: Optional[User] = Depends(get_optional_auth_user),
+    db: Session = Depends(get_db),
+):
+    image_path = OCREngineService.resolve_job_image_path(
+        db=db,
+        job_id=job_id,
+        kind=kind,
+        access_token=t,
+        user=user,
+    )
+    return FileResponse(
+        path=str(image_path),
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, max-age=86400"},
     )

@@ -179,6 +179,7 @@ export interface OCRJob {
   docTypeId: string;
   docTypeName: string;
   submissionTime: string;
+  createdAt?: string;
   completionTime?: string;
   pageCount: number;
   processingDurationMs: number;
@@ -291,6 +292,39 @@ export interface DailyUsageStat {
   jobs: number;
   failed: number;
   avgDurationMs: number;
+}
+
+export interface CustomerUsageSummary {
+  total_quota: number;
+  used_quota: number;
+  remaining_quota: number;
+  active_licenses: number;
+  active_subscriptions: number;
+  total_jobs: number;
+  avg_latency_ms: number;
+  balances: Array<{
+    license_id: string;
+    quota_type: string;
+    total_quota: number;
+    used_quota: number;
+    reserved_quota: number;
+    remaining_quota: number;
+    updated_at: string;
+  }>;
+  daily_usage: Array<{
+    date: string;
+    units: number;
+    jobs: number;
+  }>;
+  service_breakdown: Array<{
+    service_id: string;
+    service_name: string;
+    usage_units: number;
+    jobs_count: number;
+    subscriptions_count: number;
+    licenses_count: number;
+    percentage: number;
+  }>;
 }
 
 export interface AdminDashboardStats {

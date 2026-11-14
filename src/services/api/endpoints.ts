@@ -4,6 +4,7 @@ import {
   AdminMonitoring,
   AdminSystemConfig,
   AdminUsageRecord,
+  CustomerUsageSummary,
 } from '@/types';
 
 // Auth API
@@ -112,7 +113,7 @@ export const adminApi = {
 
 // Usage API
 export const usageApi = {
-  getSummary: () => api.get<any>('/usage/summary'),
+  getSummary: () => api.get<CustomerUsageSummary>('/usage/summary'),
   getHistory: () => api.get<any>('/usage/history'),
 };
 
@@ -120,6 +121,8 @@ export const usageApi = {
 export const ocrApi = {
   processIdentity: (formData: FormData) =>
     api.post<any>('/ocr/process-identity', formData),
+  getJobs: (limit = 100) =>
+    api.get<any[]>(`/ocr/jobs?limit=${limit}`),
   getHealth: () =>
     api.get<any>('/ocr/health'),
 };

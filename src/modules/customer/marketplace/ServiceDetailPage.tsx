@@ -30,7 +30,22 @@ export const ServiceDetailPage: React.FC = () => {
   const { services, packages, docTypes, checkoutPackage } = usePlatformStore();
 
   const service = services.find((s) => s.id === id) || services[0];
-  const servicePackages = packages.filter((p) => p.serviceId === service.id);
+  if (!service) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center space-y-3">
+          <p className="text-sm font-medium text-slate-700">Chưa có dịch vụ OCR nào được công bố trên Marketplace.</p>
+          <Button onClick={() => navigate('/app/marketplace')} variant="outline" size="sm">
+            Quay lại Marketplace
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const servicePackages = packages
+    .filter((p) => p.serviceId === service.id)
+    .sort((a, b) => a.price - b.price);
   const supportedDocs = docTypes.filter((d) => service.supportedDocTypeIds.includes(d.id));
 
   const [activeTab, setActiveTab] = useState<string>('pricing');
@@ -107,11 +122,13 @@ export const ServiceDetailPage: React.FC = () => {
                 <span className="text-xs font-semibold uppercase tracking-wider text-blue-600">
                   Certified OCR Service
                 </span>
-                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
-                  <Star className="h-3.5 w-3.5 text-amber-500 fill-amber-500" />
-                  <span>{service.rating} / 5.0</span>
-                  <span className="text-slate-400 font-normal">({service.reviewCount} reviews)</span>
-                </div>
+                {service.reviewCount > 0 && (
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
+                    <Star className="h-3.5 w-3.5 text-amber-500 fill-amber-500" />
+                    <span>{service.rating} / 5.0</span>
+                    <span className="text-slate-400 font-normal">({service.reviewCount} reviews)</span>
+                  </div>
+                )}
               </div>
               <h1 className="text-2xl md:text-3xl font-bold text-slate-900 mt-1">{service.name}</h1>
               <p className="text-xs md:text-sm text-slate-600 mt-2 leading-relaxed">
@@ -154,29 +171,30 @@ export const ServiceDetailPage: React.FC = () => {
           <Card className="md:col-span-2">
             <CardHeader>
               <CardTitle>Architecture & Technology Highlights</CardTitle>
-              <CardDescription>Enterprise OCR pipeline and neural network stack</CardDescription>
+              <CardDescription>Pipeline Hybrid AI đang chạy thực tế trên hệ thống</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 text-xs text-slate-700 leading-relaxed">
               <p>
-                Our <strong>{service.name}</strong> incorporates state-of-the-art vision transformers and layout analysis
-                networks to deliver industry-leading accuracy. Each document submitted undergoes pre-processing (deskew,
-                denoise, contrast enhancement) before text detection and key-value pair semantic extraction.
+                <strong>{service.name}</strong> sử dụng pipeline Hybrid OCR gồm tiền xử lý hình học
+                (<strong>DocAligner + OpenCV</strong> tự động cắt nền &amp; xoay thẳng thẻ), phát hiện vùng chữ
+                (<strong>RapidOCR</strong>), nhận dạng tiếng Việt (<strong>PaddleOCR-VL-Vi</strong> qua Ollama GPU)
+                và chuẩn hóa JSON có hậu kiểm ràng buộc (<strong>Qwen2.5-3B</strong>).
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
                 <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200">
                   <h4 className="font-semibold text-slate-900 mb-1 flex items-center gap-1.5">
-                    <Zap className="h-4 w-4 text-amber-500" /> High-Throughput Cluster
+                    <Zap className="h-4 w-4 text-amber-500" /> Hybrid Vision-Language Pipeline
                   </h4>
                   <p className="text-slate-500">
-                    Processes up to 500 pages per minute with distributed GPU inference workers.
+                    Hỗ trợ Căn cước công dân / CMND, Giấy phép lái xe (GPLX) và Hộ chiếu chuẩn ICAO MRZ.
                   </p>
                 </div>
                 <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200">
                   <h4 className="font-semibold text-slate-900 mb-1 flex items-center gap-1.5">
-                    <Lock className="h-4 w-4 text-blue-500" /> Zero Data Retention (ZDR)
+                    <Lock className="h-4 w-4 text-blue-500" /> Web History &amp; Quota Ledger
                   </h4>
                   <p className="text-slate-500">
-                    Complies with HIPAA, GDPR, and SOC2. In-memory execution without storing customer files on disk.
+                    Mỗi lượt gọi qua Web hoặc API (X-API-Key) đều lưu kết quả JSON, ảnh đối soát và trừ quota minh bạch.
                   </p>
                 </div>
               </div>
@@ -190,10 +208,10 @@ export const ServiceDetailPage: React.FC = () => {
             </CardHeader>
             <CardContent>
               <div className="bg-slate-900 text-slate-100 p-3.5 rounded-lg font-mono text-[11px] overflow-x-auto leading-relaxed">
-                <span className="text-emerald-400">POST</span> /v1/ocr/process<br />
-                <span className="text-slate-400">Host:</span> api.ocrplatform.com<br />
-                <span className="text-slate-400">X-OCR-License-Key:</span> YOUR_KEY<br />
-                <span className="text-slate-400">Content-Type:</span> multipart/form-data
+                <span className="text-emerald-400">POST</span> /api/v1/ocr/process-identity<br />
+                <span className="text-slate-400">X-API-Key:</span> &lt;YOUR_API_KEY&gt;<br />
+                <span className="text-slate-400">Content-Type:</span> multipart/form-data<br />
+                <span className="text-slate-400">Field:</span> file=@cccd.jpg
               </div>
               <Button
                 onClick={() => setActiveTab('pricing')}
@@ -225,7 +243,7 @@ export const ServiceDetailPage: React.FC = () => {
                   <div>
                     <h4 className="font-semibold text-xs text-slate-900">{cap}</h4>
                     <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
-                      Continuous reinforcement learning model trained on over 5,000,000 ground truth document specimens.
+                      Tính năng tích hợp sẵn trong dịch vụ {service.name}.
                     </p>
                   </div>
                 </div>
@@ -297,6 +315,7 @@ export const ServiceDetailPage: React.FC = () => {
                       <span className="text-xs font-bold uppercase tracking-wider text-slate-400">{pkg.tier}</span>
                       <Badge variant="slate" size="sm">{pkg.duration}</Badge>
                     </div>
+                    <h3 className="text-base font-bold text-slate-900">{pkg.name}</h3>
 
                     <div className="mt-2 mb-4">
                       <div className="text-3xl font-extrabold text-slate-900 tracking-tight">

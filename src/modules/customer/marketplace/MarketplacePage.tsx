@@ -25,7 +25,10 @@ export const MarketplacePage: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [localSearch, setLocalSearch] = useState<string>('');
 
-  const categories = ['All', 'Financial', 'Legal', 'Identity', 'Structured Data', 'General'];
+  const categories = [
+    'All',
+    ...Array.from(new Set(services.map((s) => s.category).filter(Boolean))),
+  ];
 
   // Filter services
   const query = (localSearch || searchQuery).toLowerCase();
@@ -84,6 +87,13 @@ export const MarketplacePage: React.FC = () => {
       </div>
 
       {/* Services Grid */}
+      {filteredServices.length === 0 ? (
+        <Card>
+          <CardContent className="py-12 text-center text-xs text-slate-500">
+            Không tìm thấy dịch vụ OCR phù hợp.
+          </CardContent>
+        </Card>
+      ) : (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredServices.map((service) => {
           // Resolve supported doc types names
@@ -109,11 +119,17 @@ export const MarketplacePage: React.FC = () => {
                       {service.category}
                     </Badge>
                   </div>
-                  <div className="absolute top-3 right-3 flex items-center gap-1 bg-white/95 px-2 py-0.5 rounded-md text-xs font-semibold text-slate-800 shadow-xs">
-                    <Star className="h-3 w-3 text-amber-500 fill-amber-500" />
-                    <span>{service.rating}</span>
-                    <span className="text-[10px] text-slate-400 font-normal">({service.reviewCount})</span>
-                  </div>
+                  {service.reviewCount > 0 ? (
+                    <div className="absolute top-3 right-3 flex items-center gap-1 bg-white/95 px-2 py-0.5 rounded-md text-xs font-semibold text-slate-800 shadow-xs">
+                      <Star className="h-3 w-3 text-amber-500 fill-amber-500" />
+                      <span>{service.rating}</span>
+                      <span className="text-[10px] text-slate-400 font-normal">({service.reviewCount})</span>
+                    </div>
+                  ) : (
+                    <div className="absolute top-3 right-3 bg-emerald-500/95 text-white px-2 py-0.5 rounded-md text-[10px] font-semibold shadow-xs">
+                      {service.sla || 'Live Engine'}
+                    </div>
+                  )}
                 </div>
 
                 {/* Content */}
@@ -125,6 +141,26 @@ export const MarketplacePage: React.FC = () => {
                     </h3>
                     <p className="text-xs text-slate-500 mt-1 line-clamp-2 leading-relaxed">{service.description}</p>
                   </div>
+
+                  {/* Supported Document Types */}
+                  {supportedDocs.length > 0 && (
+                    <div>
+                      <p className="text-[10px] uppercase font-semibold text-slate-400 tracking-wider mb-1.5">
+                        Giấy tờ hỗ trợ ({supportedDocs.length})
+                      </p>
+                      <div className="flex flex-wrap gap-1">
+                        {supportedDocs.map((docName, idx) => (
+                          <span
+                            key={idx}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200"
+                          >
+                            <FileCheck className="h-3 w-3 text-emerald-600" />
+                            {docName}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Capabilities Badges */}
                   <div>
@@ -157,7 +193,7 @@ export const MarketplacePage: React.FC = () => {
                     </div>
                     <div className="flex items-center gap-1.5 truncate">
                       <Globe className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-                      <span className="truncate">{service.supportedLanguages.slice(0, 2).join(', ')}...</span>
+                      <span className="truncate">{service.supportedLanguages.join(', ')}</span>
                     </div>
                   </div>
                 </CardContent>
@@ -186,6 +222,7 @@ export const MarketplacePage: React.FC = () => {
           );
         })}
       </div>
+      )}
     </div>
   );
 };

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Outlet, NavLink, useNavigate, useLocation, Link } from 'react-router-dom';
+import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
   Store,
@@ -14,11 +14,8 @@ import {
   HelpCircle,
   Building2,
   ChevronDown,
-  ShieldAlert,
-  ArrowRightLeft,
   Sparkles,
   CheckCircle2,
-  ExternalLink,
   UserPlus,
   LogIn,
   LogOut,
@@ -32,25 +29,21 @@ import { Button } from '@/components/ui/button';
 export const CustomerLayout: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { customers, activeCustomerId, setActiveCustomerId, searchQuery, setSearchQuery, currentUser } = usePlatformStore();
+  const { searchQuery, setSearchQuery, currentUser, backendConnected } = usePlatformStore();
 
   const [showOrgDropdown, setShowOrgDropdown] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [showNotificationModal, setShowNotificationModal] = useState(false);
 
-  const effectiveCustomerId = currentUser?.id || activeCustomerId;
-  const activeCustomer = currentUser ? {
-    id: currentUser.id,
-    orgName: currentUser.company_name || currentUser.full_name || currentUser.email || 'My Organization',
-    tier: 'Standard',
-  } : (customers.find((c) => c.id === effectiveCustomerId) || customers[0] || {
-    id: 'demo',
-    orgName: 'My Organization',
-    tier: 'Standard',
-  });
-
   const isAuthenticated = Boolean(api.getAccessToken());
+  const orgName =
+    currentUser?.profile?.company_name ||
+    currentUser?.company_name ||
+    currentUser?.full_name ||
+    currentUser?.email ||
+    'Guest Session';
+  const accountSubtitle = currentUser?.email || 'Not signed in';
 
   const navItems = [
     { label: 'Dashboard', path: '/app/dashboard', icon: LayoutDashboard },
@@ -62,6 +55,31 @@ export const CustomerLayout: React.FC = () => {
     { label: 'Billing & Invoices', path: '/app/billing', icon: Receipt },
     { label: 'Settings', path: '/app/settings', icon: Settings },
   ];
+
+  const handleSignOut = () => {
+    setShowProfileMenu(false);
+    api.clearTokens();
+    try {
+      localStorage.removeItem('ocr_platform_state_v1');
+      localStorage.removeItem('ocr_customer_jobs_v2');
+    } catch {
+      // ignore storage issues
+    }
+    usePlatformStore.setState({
+      currentUser: null,
+      activeCustomerId: '',
+      customers: [],
+      subscriptions: [],
+      licenses: [],
+      jobs: [],
+      orders: [],
+      invoices: [],
+      payments: [],
+      dailyStats: [],
+      customerUsageSummary: null,
+    });
+    navigate('/login');
+  };
 
   return (
     <div className="flex h-screen w-full bg-slate-50 overflow-hidden font-sans">
@@ -84,7 +102,7 @@ export const CustomerLayout: React.FC = () => {
           </div>
         </div>
 
-        {/* Organization Switcher */}
+        {/* Account Info Switcher */}
         <div className="p-3 border-b border-slate-800/80">
           <div className="relative">
             <button
@@ -96,8 +114,8 @@ export const CustomerLayout: React.FC = () => {
                   <Building2 className="h-4 w-4" />
                 </div>
                 <div className="truncate">
-                  <div className="text-xs font-semibold text-slate-200 truncate">{activeCustomer.orgName}</div>
-                  <div className="text-[10px] text-slate-400 truncate">{activeCustomer.tier} Tier</div>
+                  <div className="text-xs font-semibold text-slate-200 truncate">{orgName}</div>
+                  <div className="text-[10px] text-slate-400 truncate">{accountSubtitle}</div>
                 </div>
               </div>
               <ChevronDown className="h-4 w-4 text-slate-400 shrink-0 ml-1" />
@@ -109,7 +127,7 @@ export const CustomerLayout: React.FC = () => {
                   Current Account
                 </div>
                 <div className="px-3 py-2 text-xs text-blue-400 font-medium bg-slate-700/50 flex items-center justify-between">
-                  <span className="truncate">{activeCustomer.orgName}</span>
+                  <span className="truncate">{orgName}</span>
                   <CheckCircle2 className="h-3.5 w-3.5 text-blue-400 shrink-0" />
                 </div>
                 {currentUser && (
@@ -167,7 +185,7 @@ export const CustomerLayout: React.FC = () => {
 
         {/* Auth Quick Links in Sidebar if not authenticated */}
         {!isAuthenticated && (
-          <div className="p-3 mx-3 mb-2 rounded-lg bg-blue-950/40 border border-blue-800/60">
+          <div className="p-3 mx-3 mb-3 rounded-lg bg-blue-950/40 border border-blue-800/60">
             <p className="text-xs font-semibold text-blue-200 mb-1">Chưa đăng nhập?</p>
             <p className="text-[11px] text-slate-400 mb-2">Đăng ký hoặc đăng nhập để quản lý giấy phép OCR của bạn.</p>
             <div className="flex gap-2">
@@ -191,30 +209,6 @@ export const CustomerLayout: React.FC = () => {
             </div>
           </div>
         )}
-
-        {/* Portal Switcher Footer Banner */}
-        <div className="p-3 border-t border-slate-800 bg-slate-950/40">
-          <div className="p-3 rounded-lg bg-gradient-to-br from-slate-800/90 to-slate-800/40 border border-slate-700/60 text-slate-300">
-            <div className="flex items-center justify-between text-xs font-semibold text-slate-200 mb-1">
-              <span>Platform Admin</span>
-              <span className="text-[10px] bg-amber-500/20 text-amber-300 px-1.5 py-0.2 rounded border border-amber-500/30">
-                Staff
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-400 mb-2.5 leading-relaxed">
-              Manage OCR catalog, document types, customers & system ops.
-            </p>
-            <Button
-              onClick={() => navigate('/admin/dashboard')}
-              variant="outline"
-              size="sm"
-              className="w-full bg-slate-700/80 hover:bg-slate-700 border-slate-600 text-slate-200 justify-center text-xs h-8"
-            >
-              <ArrowRightLeft className="h-3.5 w-3.5 mr-1 text-amber-400" />
-              Go to Admin Portal
-            </Button>
-          </div>
-        </div>
       </aside>
 
       {/* Main Container */}
@@ -287,11 +281,22 @@ export const CustomerLayout: React.FC = () => {
                   className="flex items-center gap-2.5 p-1.5 pl-2 rounded-lg hover:bg-slate-100 transition-colors text-left"
                 >
                   <div className="h-8 w-8 rounded-full bg-blue-600 text-white font-semibold text-xs flex items-center justify-center ring-2 ring-blue-100 shadow-xs">
-                    {currentUser?.full_name ? currentUser.full_name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase() : 'CU'}
+                    {currentUser?.full_name
+                      ? currentUser.full_name
+                          .split(' ')
+                          .map((n: string) => n[0])
+                          .join('')
+                          .slice(0, 2)
+                          .toUpperCase()
+                      : 'CU'}
                   </div>
                   <div className="hidden sm:block text-left">
-                    <div className="text-xs font-semibold text-slate-800 leading-tight">{currentUser?.full_name || 'Customer Account'}</div>
-                    <div className="text-[10px] text-slate-500 leading-tight">{currentUser?.role || 'Customer'}</div>
+                    <div className="text-xs font-semibold text-slate-800 leading-tight">
+                      {currentUser?.full_name || 'Customer Account'}
+                    </div>
+                    <div className="text-[10px] text-slate-500 leading-tight">
+                      {currentUser?.role || 'CUSTOMER'}
+                    </div>
                   </div>
                   <ChevronDown className="h-3.5 w-3.5 text-slate-400 ml-1" />
                 </button>
@@ -299,8 +304,12 @@ export const CustomerLayout: React.FC = () => {
                 {showProfileMenu && (
                   <div className="absolute right-0 mt-2 w-56 rounded-xl bg-white shadow-xl border border-slate-200 py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100">
                     <div className="px-4 py-2 border-b border-slate-100">
-                      <p className="text-xs font-bold text-slate-800">{currentUser?.full_name || 'Customer Account'}</p>
-                      <p className="text-[11px] text-slate-500 truncate">{currentUser?.email || 'customer@ocrplatform.io'}</p>
+                      <p className="text-xs font-bold text-slate-800">
+                        {currentUser?.full_name || 'Customer Account'}
+                      </p>
+                      <p className="text-[11px] text-slate-500 truncate">
+                        {currentUser?.email || ''}
+                      </p>
                     </div>
                     <div className="py-1">
                       <NavLink
@@ -324,24 +333,9 @@ export const CustomerLayout: React.FC = () => {
                       >
                         + Đăng ký tài khoản khác
                       </NavLink>
-                      <button
-                        onClick={() => {
-                          setShowProfileMenu(false);
-                          navigate('/admin/dashboard');
-                        }}
-                        className="w-full text-left px-4 py-2 text-xs text-amber-600 hover:bg-amber-50 font-medium transition-colors"
-                      >
-                        Switch to Admin Portal
-                      </button>
                       <div className="border-t border-slate-100 my-1" />
                       <button
-                        onClick={() => {
-                          setShowProfileMenu(false);
-                          api.clearTokens();
-                          localStorage.removeItem('ocr_platform_state_v1');
-                          usePlatformStore.setState({ currentUser: null });
-                          navigate('/login');
-                        }}
+                        onClick={handleSignOut}
                         className="w-full text-left px-4 py-2 text-xs text-red-600 hover:bg-red-50 font-medium flex items-center gap-1.5 transition-colors"
                       >
                         <LogOut className="h-3.5 w-3.5" />
@@ -372,9 +366,13 @@ export const CustomerLayout: React.FC = () => {
           <div className="p-3.5 rounded-lg bg-blue-50 border border-blue-200/80 flex items-start gap-3">
             <Sparkles className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
             <div>
-              <p className="text-xs font-semibold text-blue-900">Platform Active</p>
+              <p className="text-xs font-semibold text-blue-900">
+                {backendConnected ? 'Platform Connected' : 'Connecting to Platform...'}
+              </p>
               <p className="text-[11px] text-blue-700 mt-0.5">
-                All OCR microservice clusters and mock payment gateways are operational.
+                {backendConnected
+                  ? 'Live backend API & OCR engine services are synchronized with your account.'
+                  : 'Waiting for backend synchronization.'}
               </p>
             </div>
           </div>
@@ -391,16 +389,16 @@ export const CustomerLayout: React.FC = () => {
         <div className="space-y-4">
           <div className="p-4 rounded-lg bg-slate-900 text-slate-300 font-mono text-xs">
             <p className="text-slate-400 mb-2"># Quick Start: Execute OCR with API Key</p>
-            <p className="text-emerald-400">curl -X POST https://api.ocrplatform.io/v1/ocr/execute \</p>
-            <p className="text-slate-300 pl-4">-H "X-OCR-API-KEY: YOUR_API_KEY" \</p>
-            <p className="text-slate-300 pl-4">-F "file=@document.pdf"</p>
+            <p className="text-emerald-400">curl -X POST /api/v1/ocr/process-identity \</p>
+            <p className="text-slate-300 pl-4">-H "X-API-Key: YOUR_API_KEY" \</p>
+            <p className="text-slate-300 pl-4">-F "file=@document.jpg"</p>
           </div>
           <div className="space-y-2">
             <h4 className="text-xs font-semibold text-slate-800">Support Channels</h4>
             <div className="grid grid-cols-2 gap-2 text-xs">
               <div className="p-2.5 rounded-lg border border-slate-200">
-                <span className="font-medium text-slate-700 block">Documentation</span>
-                <span className="text-[11px] text-slate-500">docs.ocrplatform.io</span>
+                <span className="font-medium text-slate-700 block">API Docs (Swagger)</span>
+                <span className="text-[11px] text-slate-500">/api/v1/docs</span>
               </div>
               <div className="p-2.5 rounded-lg border border-slate-200">
                 <span className="font-medium text-slate-700 block">Technical Support</span>

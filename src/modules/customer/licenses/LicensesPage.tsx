@@ -22,7 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { Input } from '@/components/ui/form-controls';
 import { License } from '@/types';
-import { formatDate, formatNumber } from '@/utils/formatters';
+import { formatDate, formatDateTime, formatNumber } from '@/utils/formatters';
 
 export const LicensesPage: React.FC = () => {
   const { licenses, activeCustomerId, currentUser, activateLicenseByKey, renewLicense, syncWithBackend } = usePlatformStore();
@@ -470,6 +470,7 @@ export const LicensesPage: React.FC = () => {
                       <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold">
                         <th className="py-2.5 px-3">Credential Name</th>
                         <th className="py-2.5 px-3">Masked Secret</th>
+                        <th className="py-2.5 px-3">Last Used</th>
                         <th className="py-2.5 px-3">Status</th>
                         <th className="py-2.5 px-3 text-right">Actions</th>
                       </tr>
@@ -480,6 +481,9 @@ export const LicensesPage: React.FC = () => {
                           <tr key={c.id} className="hover:bg-slate-50/50">
                             <td className="py-2 px-3 font-semibold text-slate-800">{c.name}</td>
                             <td className="py-2 px-3 font-mono text-slate-600">{c.masked_key}</td>
+                            <td className="py-2 px-3 text-slate-500">
+                              {c.last_used_at ? formatDateTime(c.last_used_at) : 'Never'}
+                            </td>
                             <td className="py-2 px-3">
                               {c.status === 'active' ? (
                                 <Badge variant="success" size="sm">Active</Badge>
@@ -504,13 +508,38 @@ export const LicensesPage: React.FC = () => {
                         ))
                       ) : (
                         <tr>
-                          <td colSpan={4} className="py-8 text-center text-slate-400">
+                          <td colSpan={5} className="py-8 text-center text-slate-400">
                             No API credentials created yet. Click Generate to issue your first developer key.
                           </td>
                         </tr>
                       )}
                     </tbody>
                   </table>
+                </div>
+
+                {/* External API Quick Reference */}
+                <div className="p-3.5 bg-slate-900 text-slate-200 rounded-xl space-y-2 text-[11px]">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-white">External OCR API Endpoint (JSON + Web History)</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleCopyKey(
+                          `curl -X POST "${window.location.origin}/api/v1/ocr/process-identity" -H "X-API-Key: ${generatedKey || '<YOUR_API_KEY>'}" -F "file=@cccd.jpg"`,
+                          'curl-snippet'
+                        )
+                      }
+                      className="text-slate-300 hover:text-white flex items-center gap-1"
+                    >
+                      {copiedKey === 'curl-snippet' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                      <span>{copiedKey === 'curl-snippet' ? 'Copied' : 'Copy cURL'}</span>
+                    </button>
+                  </div>
+                  <pre className="font-mono text-emerald-400 overflow-x-auto whitespace-pre-wrap break-all">
+{`curl -X POST "${window.location.origin}/api/v1/ocr/process-identity" \\
+  -H "X-API-Key: ${generatedKey || '<YOUR_API_KEY>'}" \\
+  -F "file=@cccd.jpg"`}
+                  </pre>
                 </div>
               </div>
             )}
