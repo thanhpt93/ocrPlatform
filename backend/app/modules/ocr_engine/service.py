@@ -11,6 +11,7 @@ import threading
 import time
 import json
 import re
+import unicodedata
 import urllib.request
 import urllib.error
 from typing import Optional, Dict, Any, Tuple, List
@@ -46,6 +47,7 @@ from app.common.models.ocr_jobs import OCRJobRecord
 from app.common.enums import LicenseStatus, CredentialStatus, LedgerEntryType, QuotaType, UserRole
 from app.common.schemas.ocr_engine import OCRExtractionResponse, OCRJobHistoryItem, SegmentationMetadata, VLMModelOption
 from app.modules.ocr_engine.prompts import SYSTEM_PROMPT_HYBRID_OCR_JSON_MAPPER
+from app.modules.ocr_engine.vn_address_normalizer import normalize_vietnamese_address
 
 
 def _get_ollama_base_url() -> str:
@@ -139,7 +141,7 @@ def _persist_job_images_to_disk(
 
 def normalize_image_bytes(image_bytes: bytes) -> bytes:
     """
-    Validate and normalize image bytes to standard RGB JPEG using Pillow.
+    Validate and normalize image bytes to lossless RGB PNG using Pillow.
     Fixes WebP/AVIF/CMYK/RGBA/EXIF issues and resizes excessively large images
     so Ollama's vision encoder never returns HTTP 400 Bad Request.
     """
@@ -163,7 +165,7 @@ def normalize_image_bytes(image_bytes: bytes) -> bytes:
                 img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION), Image.Resampling.LANCZOS)
 
             out_buf = io.BytesIO()
-            img.save(out_buf, format="JPEG", quality=92)
+            img.save(out_buf, format="PNG")
             return out_buf.getvalue()
     except Exception:
         return image_bytes
@@ -531,7 +533,7 @@ def _encode_vlm_image_bytes(
     max_width: Optional[int] = None,
     max_height: Optional[int] = None,
 ) -> bytes:
-    """Encode cropped/upright card image to JPEG bytes sized appropriately for VLM VRAM budget."""
+    """Encode cropped/upright card image to lossless PNG bytes sized appropriately for VLM VRAM budget."""
     vlm_img = img.copy()
     if max_width and max_height:
         if vlm_img.size[0] > max_width or vlm_img.size[1] > max_height:
@@ -539,7 +541,7 @@ def _encode_vlm_image_bytes(
     elif max_dimension > 0 and max(vlm_img.size) > max_dimension:
         vlm_img.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
     buf = io.BytesIO()
-    vlm_img.save(buf, format="JPEG", quality=92)
+    vlm_img.save(buf, format="PNG")
     return buf.getvalue()
 
 def _score_red_header_top(img: Image.Image) -> float:
@@ -951,18 +953,63 @@ def _detect_text_boxes_bgr(image_bytes: bytes, box_pad_px: int = 2) -> Tuple[np.
     raw_items: List[Dict[str, Any]] = []
     for b in (boxes or []):
         pts = np.asarray(b, dtype=np.float32) - pad
-        x1 = max(0, int(pts[:, 0].min()) - box_pad_px)
-        y1 = max(0, int(pts[:, 1].min()) - box_pad_px)
-        x2 = min(w, int(pts[:, 0].max()) + box_pad_px)
-        y2 = min(h, int(pts[:, 1].max()) + box_pad_px)
+        box_h = max(1, int(round(float(pts[:, 1].max() - pts[:, 1].min()))))
+        pad_x = max(3, box_pad_px)
+        pad_y = min(10, max(5, int(round(box_h * 0.14))))
+        x1 = max(0, int(pts[:, 0].min()) - pad_x)
+        y1 = max(0, int(pts[:, 1].min()) - pad_y)
+        x2 = min(w, int(pts[:, 0].max()) + pad_x)
+        y2 = min(h, int(pts[:, 1].max()) + pad_y)
         if x2 - x1 < 4 or y2 - y1 < 4:
             continue
         raw_items.append({"bbox": [x1, y1, x2, y2], "crop_rgb": img_bgr[y1:y2, x1:x2, ::-1]})
     return img_bgr, raw_items, det_ms
 
 
-def _build_paddleocr_vl_row_canvas(row: List[Dict[str, Any]], min_row_height: int = 48, gap_x: int = 14) -> np.ndarray:
-    """Concatenate horizontal boxes in one row onto a clean white canvas and upscale if tiny."""
+def _enhance_row_for_ocr(
+    canvas_rgb: np.ndarray,
+    orig_row_height: int,
+    force_enhance: bool = False,
+    lap_var: Optional[float] = None,
+) -> Tuple[np.ndarray, float, bool]:
+    """
+    Detect blurry or low-resolution row images via Laplacian variance / row height
+    and apply adaptive CLAHE luminance contrast + Unsharp Masking for sharper glyphs.
+    Returns (processed_rgb, laplacian_variance, enhanced_applied).
+    """
+    if cv2 is None or canvas_rgb is None or canvas_rgb.size == 0:
+        return canvas_rgb, 0.0, False
+
+    gray = cv2.cvtColor(canvas_rgb, cv2.COLOR_RGB2GRAY)
+    measured_lap = float(lap_var) if lap_var is not None else float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    needs_enhance = bool(force_enhance or orig_row_height < 32 or measured_lap < 220.0)
+    if not needs_enhance or float(np.std(gray)) <= 2.0:
+        return canvas_rgb, round(measured_lap, 2), False
+
+    lab = cv2.cvtColor(canvas_rgb, cv2.COLOR_RGB2LAB)
+    l_chan, a_chan, b_chan = cv2.split(lab)
+    clahe = cv2.createCLAHE(
+        clipLimit=2.2 if force_enhance else 1.8,
+        tileGridSize=(8, 4),
+    )
+    l_clahe = clahe.apply(l_chan)
+    l_out = cv2.addWeighted(l_clahe, 0.70, l_chan, 0.30, 0)
+    enhanced = cv2.cvtColor(cv2.merge((l_out, a_chan, b_chan)), cv2.COLOR_LAB2RGB)
+
+    sigma = 1.2 if (force_enhance or measured_lap < 120.0) else 0.9
+    amount = 1.55 if force_enhance else (1.45 if measured_lap < 140.0 else 1.25)
+    blurred = cv2.GaussianBlur(enhanced, (0, 0), sigmaX=sigma)
+    sharpened = cv2.addWeighted(enhanced, 1.0 + amount, blurred, -amount, 0)
+    return sharpened, round(measured_lap, 2), True
+
+
+def _build_paddleocr_vl_row_canvas(
+    row: List[Dict[str, Any]],
+    min_row_height: int = 48,
+    gap_x: int = 14,
+    force_enhance: bool = False,
+) -> np.ndarray:
+    """Concatenate horizontal boxes in one row onto a white canvas, upscale small/blurry rows, and enhance."""
     rh = max(it["crop_rgb"].shape[0] for it in row)
     rw = sum(it["crop_rgb"].shape[1] for it in row) + gap_x * (len(row) - 1)
     canvas = np.full((rh, rw, 3), 255, dtype=np.uint8)
@@ -973,13 +1020,33 @@ def _build_paddleocr_vl_row_canvas(row: List[Dict[str, Any]], min_row_height: in
         y_off = (rh - ch) // 2
         canvas[y_off:y_off + ch, cx:cx + cw] = c
         cx += cw + gap_x
-    if 0 < rh < min_row_height:
-        scale = float(min_row_height) / float(rh)
-        canvas = cv2.resize(
-            canvas,
-            (max(1, int(round(rw * scale))), min_row_height),
-            interpolation=cv2.INTER_CUBIC,
-        )
+
+    lap_var: Optional[float] = None
+    if cv2 is not None and canvas.size > 0:
+        gray_orig = cv2.cvtColor(canvas, cv2.COLOR_RGB2GRAY)
+        lap_var = float(cv2.Laplacian(gray_orig, cv2.CV_64F).var())
+
+    target_h = min_row_height
+    if rh < 32 or force_enhance or (lap_var is not None and lap_var < 220.0):
+        target_h = max(target_h, 56)
+
+    if 0 < rh < target_h:
+        scale = float(target_h) / float(rh)
+        new_w = max(1, int(round(rw * scale)))
+        if cv2 is not None:
+            canvas = cv2.resize(canvas, (new_w, target_h), interpolation=cv2.INTER_CUBIC)
+        else:
+            canvas = np.asarray(
+                Image.fromarray(canvas).resize((new_w, target_h), Image.Resampling.BICUBIC),
+                dtype=np.uint8,
+            )
+
+    canvas, _, _ = _enhance_row_for_ocr(
+        canvas,
+        orig_row_height=rh,
+        force_enhance=force_enhance,
+        lap_var=lap_var,
+    )
     return canvas
 
 
@@ -999,16 +1066,369 @@ def _build_paddleocr_vl_strip_image(rows: List[List[Dict[str, Any]]], min_row_he
     return Image.fromarray(strip)
 
 
-def _call_paddleocr_vl_ollama(img_pil: Image.Image, model_name: str, num_predict: int = 256) -> str:
-    """Invoke PaddleOCR-VL-Vi model via Ollama /api/chat with deterministic OCR decoding."""
+def _extract_token_probs(logprobs: Any) -> List[Tuple[str, float]]:
+    """Extract list of (token_text, probability_percent) from Ollama logprobs."""
+    if not isinstance(logprobs, list) or not logprobs:
+        return []
+    out: List[Tuple[str, float]] = []
+    for entry in logprobs:
+        if not isinstance(entry, dict):
+            continue
+        lp = entry.get("logprob")
+        if lp is None or isinstance(lp, bool):
+            continue
+        try:
+            lp_f = float(lp)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(lp_f):
+            continue
+        prob_pct = min(1.0, max(0.0, math.exp(min(0.0, lp_f)))) * 100.0
+        out.append((str(entry.get("token") or ""), prob_pct))
+    return out
+
+
+def _compute_confidence_from_logprobs(
+    logprobs: Any,
+    ignore_newline_only: bool = True,
+) -> Tuple[Optional[float], int]:
+    """
+    Compute mean token probability (%) in [0.0, 100.0] from Ollama logprobs array.
+    Returns (confidence_percent_or_None, token_count).
+    """
+    if not isinstance(logprobs, list) or not logprobs:
+        return None, 0
+
+    probs: List[float] = []
+    for entry in logprobs:
+        if not isinstance(entry, dict):
+            continue
+        lp = entry.get("logprob")
+        if lp is None or isinstance(lp, bool):
+            continue
+        try:
+            lp_f = float(lp)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(lp_f):
+            continue
+        tok = str(entry.get("token") or "")
+        if ignore_newline_only and tok and tok.strip("\r\n") == "":
+            continue
+        prob = min(1.0, max(0.0, math.exp(min(0.0, lp_f))))
+        probs.append(prob)
+
+    if not probs:
+        return None, 0
+    return round((sum(probs) / len(probs)) * 100.0, 2), len(probs)
+
+
+def _split_logprobs_by_nonempty_lines(logprobs: Any) -> List[Tuple[float, int]]:
+    """
+    Group Ollama token logprobs into non-empty text lines (matching `[ln.strip() for ln in raw.splitlines() if ln.strip()]`).
+    Returns list of (mean_line_confidence_pct, token_count) per non-empty line.
+    """
+    if not isinstance(logprobs, list) or not logprobs:
+        return []
+
+    lines_probs: List[List[float]] = []
+    cur_probs: List[float] = []
+    cur_has_text = False
+
+    for entry in logprobs:
+        if not isinstance(entry, dict):
+            continue
+        lp = entry.get("logprob")
+        if lp is None or isinstance(lp, bool):
+            continue
+        try:
+            lp_f = float(lp)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(lp_f):
+            continue
+        prob = min(1.0, max(0.0, math.exp(min(0.0, lp_f))))
+        tok = str(entry.get("token") or "")
+
+        if "\n" in tok:
+            parts = tok.split("\n")
+            for i, part in enumerate(parts):
+                if part.strip():
+                    cur_probs.append(prob)
+                    cur_has_text = True
+                if i < len(parts) - 1:
+                    if cur_has_text and cur_probs:
+                        lines_probs.append(cur_probs)
+                    cur_probs = []
+                    cur_has_text = False
+        else:
+            if tok.strip():
+                cur_has_text = True
+            cur_probs.append(prob)
+
+    if cur_has_text and cur_probs:
+        lines_probs.append(cur_probs)
+
+    return [
+        (round((sum(p) / len(p)) * 100.0, 2), len(p))
+        for p in lines_probs
+        if p
+    ]
+
+
+def _split_token_probs_by_nonempty_lines(logprobs: Any) -> List[List[Tuple[str, float]]]:
+    """
+    Group (token_text, prob_pct) pairs into non-empty lines matching
+    `[ln.strip() for ln in raw.splitlines() if ln.strip()]`.
+    """
+    tok_probs = _extract_token_probs(logprobs)
+    if not tok_probs:
+        return []
+
+    lines_tokens: List[List[Tuple[str, float]]] = []
+    cur_tokens: List[Tuple[str, float]] = []
+    cur_has_text = False
+
+    for tok, prob_pct in tok_probs:
+        if "\n" in tok:
+            parts = tok.split("\n")
+            for i, part in enumerate(parts):
+                clean_part = part.replace("\r", "")
+                if clean_part:
+                    cur_tokens.append((clean_part, prob_pct))
+                    if clean_part.strip():
+                        cur_has_text = True
+                if i < len(parts) - 1:
+                    if cur_has_text and cur_tokens:
+                        lines_tokens.append(cur_tokens)
+                    cur_tokens = []
+                    cur_has_text = False
+        else:
+            clean_tok = tok.replace("\r", "")
+            if clean_tok:
+                cur_tokens.append((clean_tok, prob_pct))
+                if clean_tok.strip():
+                    cur_has_text = True
+
+    if cur_has_text and cur_tokens:
+        lines_tokens.append(cur_tokens)
+
+    return lines_tokens
+
+
+def _strip_accents_lower(text: str) -> str:
+    text = text.replace("đ", "d").replace("Đ", "d")
+    decomposed = unicodedata.normalize("NFD", text.casefold())
+    return "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
+
+
+def _build_ocr_char_prob_map(ocr_lines: List[Dict[str, Any]]) -> Tuple[str, List[Optional[float]]]:
+    """
+    Build concatenated OCR text and aligned per-character probability (%) list
+    from PaddleOCR-VL lines (`tokens` preferred, line `confidence` fallback).
+    """
+    full_chars: List[str] = []
+    full_probs: List[Optional[float]] = []
+
+    for line_idx, it in enumerate(ocr_lines):
+        if not isinstance(it, dict):
+            continue
+        line_text = str(it.get("text") or "")
+        if not line_text:
+            continue
+        if full_chars:
+            full_chars.append("\n")
+            full_probs.append(None)
+
+        tok_list = it.get("tokens")
+        matched_tokens = False
+        if isinstance(tok_list, list) and tok_list:
+            raw_chars: List[str] = []
+            raw_probs: List[float] = []
+            for tok_item in tok_list:
+                if isinstance(tok_item, (tuple, list)) and len(tok_item) == 2:
+                    t_str, p_val = str(tok_item[0]), float(tok_item[1])
+                    for ch in t_str:
+                        raw_chars.append(ch)
+                        raw_probs.append(p_val)
+            joined = "".join(raw_chars)
+            l_trim = len(joined) - len(joined.lstrip())
+            r_trim = len(joined.rstrip())
+            if joined[l_trim:r_trim] == line_text:
+                full_chars.extend(raw_chars[l_trim:r_trim])
+                full_probs.extend(raw_probs[l_trim:r_trim])
+                matched_tokens = True
+
+        if not matched_tokens:
+            line_conf = it.get("confidence")
+            c_val = float(line_conf) if line_conf is not None else None
+            for ch in line_text:
+                full_chars.append(ch)
+                full_probs.append(c_val)
+
+    return "".join(full_chars), full_probs
+
+
+def _collapse_ws_with_map(text: str, strip_accents: bool = False) -> Tuple[str, List[int]]:
+    """Collapse whitespace runs to single space and keep index mapping back to `text`."""
+    out_chars: List[str] = []
+    idx_map: List[int] = []
+    in_ws = False
+    for orig_idx, ch in enumerate(text):
+        if ch.isspace():
+            if out_chars and not in_ws:
+                out_chars.append(" ")
+                idx_map.append(orig_idx)
+            in_ws = True
+        else:
+            in_ws = False
+            norm_ch = _strip_accents_lower(ch) if strip_accents else ch.casefold()
+            for nc in norm_ch:
+                out_chars.append(nc)
+                idx_map.append(orig_idx)
+    if out_chars and out_chars[-1] == " ":
+        out_chars.pop()
+        idx_map.pop()
+    return "".join(out_chars), idx_map
+
+
+def _match_value_ocr_confidence(
+    val_str: str,
+    norm_text: str,
+    norm_map: List[int],
+    ascii_text: str,
+    ascii_map: List[int],
+    full_probs: List[Optional[float]],
+) -> Optional[float]:
+    """Locate `val_str` (exact -> comma chunks -> word tokens) in OCR text and average char probabilities."""
+    def _span_probs(start: int, length: int, idx_map: List[int]) -> List[float]:
+        seen_orig = set()
+        vals: List[float] = []
+        for pos in range(start, start + length):
+            if pos < len(idx_map):
+                oi = idx_map[pos]
+                if oi not in seen_orig:
+                    seen_orig.add(oi)
+                    p = full_probs[oi] if oi < len(full_probs) else None
+                    if p is not None:
+                        vals.append(p)
+        return vals
+
+    def _find_query(query: str, text_buf: str, idx_map: List[int]) -> List[float]:
+        if not query or not text_buf:
+            return []
+        pattern = r"(?:^|(?<=[\s:;,/\-\"'(]))" + re.escape(query) + r"(?=$|[\s:;,/\-\"')\.])"
+        m = re.search(pattern, text_buf)
+        if m:
+            return _span_probs(m.start(), len(query), idx_map)
+        pos = text_buf.find(query)
+        if pos != -1:
+            return _span_probs(pos, len(query), idx_map)
+        return []
+
+    q_norm = " ".join(val_str.split()).casefold()
+    if not q_norm:
+        return None
+
+    direct = _find_query(q_norm, norm_text, norm_map)
+    if direct:
+        return round(sum(direct) / len(direct), 2)
+
+    # Multi-line / comma-joined values (e.g., residence_address across 2 lines)
+    chunks = [c.strip() for c in re.split(r"[,;]+", val_str) if c.strip()]
+    collected: List[float] = []
+    for ch in chunks:
+        ch_norm = " ".join(ch.split()).casefold()
+        res = _find_query(ch_norm, norm_text, norm_map)
+        if not res:
+            for word in ch_norm.split():
+                if len(word) >= 2 or word.isdigit():
+                    w_res = _find_query(word, norm_text, norm_map)
+                    if not w_res:
+                        w_ascii = _strip_accents_lower(word)
+                        w_res = _find_query(w_ascii, ascii_text, ascii_map)
+                    collected.extend(w_res)
+        else:
+            collected.extend(res)
+
+    if not collected:
+        q_ascii = _strip_accents_lower(" ".join(val_str.split()))
+        collected = _find_query(q_ascii, ascii_text, ascii_map)
+
+    if not collected:
+        return None
+    return round(sum(collected) / len(collected), 2)
+
+
+def _extract_llm_field_confidences(logprobs: Any) -> Dict[str, float]:
+    """
+    Parse JSON key-value spans from Ollama LLM logprobs and return mean token
+    probability (%) per extracted field value (excluding JSON punctuation/keys).
+    """
+    tok_probs = _extract_token_probs(logprobs)
+    if not tok_probs:
+        return {}
+
+    concat = "".join(t for t, _ in tok_probs)
+    char_probs: List[float] = []
+    for t, p in tok_probs:
+        if t:
+            char_probs.extend([p] * len(t))
+
+    start_brace = concat.find("{")
+    if start_brace == -1 or len(char_probs) != len(concat):
+        return {}
+
+    decoder = json.JSONDecoder()
+    pos = start_brace + 1
+    n = len(concat)
+    field_confs: Dict[str, float] = {}
+    try:
+        while pos < n:
+            while pos < n and concat[pos] in " \t\r\n,":
+                pos += 1
+            if pos >= n or concat[pos] == "}":
+                break
+            if concat[pos] != '"':
+                break
+            key, pos = decoder.raw_decode(concat, pos)
+            while pos < n and concat[pos] in " \t\r\n:":
+                pos += 1
+            if pos >= n:
+                break
+            val_start = pos
+            val_obj, val_end = decoder.raw_decode(concat, pos)
+            pos = val_end
+            if val_obj is None or val_obj == "" or val_obj == []:
+                continue
+            span_start, span_end = val_start, val_end
+            if isinstance(val_obj, str) and val_end - val_start >= 2 and concat[val_start] == '"' and concat[val_end - 1] == '"':
+                span_start += 1
+                span_end -= 1
+            span = char_probs[span_start:span_end]
+            if span:
+                field_confs[str(key)] = round(sum(span) / len(span), 2)
+    except (ValueError, json.JSONDecodeError):
+        return field_confs
+    return field_confs
+
+
+def _call_paddleocr_vl_ollama(
+    img_pil: Image.Image,
+    model_name: str,
+    num_predict: int = 256,
+    _meta_out: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Invoke PaddleOCR-VL-Vi model via Ollama /api/chat with lossless PNG and deterministic OCR decoding."""
     buf = io.BytesIO()
-    img_pil.save(buf, format="JPEG", quality=95)
+    img_pil.save(buf, format="PNG")
     b64_img = base64.b64encode(buf.getvalue()).decode("utf-8")
 
     payload = {
         "model": model_name,
         "messages": [{"role": "user", "content": "OCR:", "images": [b64_img]}],
         "stream": False,
+        "logprobs": True,
         "options": {
             "temperature": 0.0,
             "top_k": 1,
@@ -1026,6 +1446,11 @@ def _call_paddleocr_vl_ollama(img_pil: Image.Image, model_name: str, num_predict
     )
     with urllib.request.urlopen(req, timeout=settings.OLLAMA_TIMEOUT_SECONDS) as resp:
         data = json.loads(resp.read().decode("utf-8"))
+    if isinstance(_meta_out, dict):
+        conf, tok_cnt = _compute_confidence_from_logprobs(data.get("logprobs"))
+        _meta_out["confidence"] = conf
+        _meta_out["token_count"] = tok_cnt
+        _meta_out["logprobs"] = data.get("logprobs")
     return str(data.get("message", {}).get("content", "") or "").strip()
 
 
@@ -1050,14 +1475,67 @@ def _find_suspicious_id_line_index(lines: List[str]) -> Optional[int]:
     return None
 
 
+def _has_ocr_repetition_collapse(lines: List[str]) -> bool:
+    """
+    Detect VLM decoding collapse where a phrase/token repeats continuously on one line
+    (e.g. 'Thanh Hóa, Thành Hóa, Thành Hóa, ...') until hitting num_predict.
+    """
+    for ln in lines:
+        if len(ln) < 60:
+            continue
+        chunks = [c.strip().casefold() for c in ln.split(",") if c.strip()]
+        if len(chunks) >= 5:
+            from collections import Counter
+            most_common_cnt = Counter(chunks).most_common(1)[0][1]
+            if most_common_cnt >= 4:
+                return True
+        words = [w.casefold() for w in re.findall(r"[0-9A-Za-zÀ-ỹ]+", ln)]
+        if len(words) >= 12 and (len(set(words)) / float(len(words))) < 0.45:
+            return True
+    return False
+
+
+def _ocr_single_row_paddleocr_vl(
+    row: List[Dict[str, Any]],
+    model_name: str,
+    min_row_height: int,
+    num_predict: int = 96,
+) -> Tuple[str, Optional[float], int, Optional[List[Tuple[str, float]]]]:
+    """Run enhanced single-row PaddleOCR-VL recognition and return (text, conf, tok_cnt, tokens)."""
+    row_canvas = _build_paddleocr_vl_row_canvas(
+        row,
+        min_row_height=min_row_height,
+        force_enhance=True,
+    )
+    margin = 14
+    padded_row = np.full(
+        (row_canvas.shape[0] + margin * 2, row_canvas.shape[1] + margin * 2, 3),
+        255,
+        dtype=np.uint8,
+    )
+    padded_row[margin:margin + row_canvas.shape[0], margin:margin + row_canvas.shape[1]] = row_canvas
+    meta: Dict[str, Any] = {}
+    txt = _call_paddleocr_vl_ollama(
+        Image.fromarray(padded_row),
+        model_name,
+        num_predict=num_predict,
+        _meta_out=meta,
+    )
+    clean = " ".join(txt.splitlines()).strip()
+    conf = meta.get("confidence")
+    tok_cnt = int(meta.get("token_count") or (1 if conf is not None else 0))
+    tokens = _extract_token_probs(meta.get("logprobs")) or None
+    return clean, (float(conf) if conf is not None else None), tok_cnt, tokens
+
+
 def _extract_text_lines_paddleocr_vl(
     image_bytes: bytes,
     paddle_model: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], float, float]:
     """
-    Run RapidOCR DBNet text detection + single-pass stacked strip recognition with
-    Vietnamese fine-tuned PaddleOCR-VL (Ollama). Automatically performs a single-row
-    refinement ONLY if the card ID line appears noisy/corrupted.
+    Run RapidOCR DBNet text detection + stacked strip recognition (auto-chunked when >9 rows
+    to prevent VLM repetition collapse) with Vietnamese fine-tuned PaddleOCR-VL (Ollama).
+    Automatically falls back per-row on chunk collapse and refines corrupted ID / low-confidence rows.
     Returns (lines, det_ms, paddleocr_vl_ms).
     """
     effective_paddle_model = (paddle_model or getattr(settings, "PADDLEOCR_VL_MODEL", "paddleocr-vl-vi")).strip()
@@ -1068,29 +1546,115 @@ def _extract_text_lines_paddleocr_vl(
     rows = _sort_ocr_lines_y_center(raw_items, img_width=w, img_height=h)
 
     t_ocr0 = time.perf_counter()
-    if rows:
-        strip_pil = _build_paddleocr_vl_strip_image(rows, min_row_height=min_row_h)
-        raw_text = _call_paddleocr_vl_ollama(strip_pil, effective_paddle_model, num_predict=256)
-    else:
-        full_pil = Image.fromarray(img_bgr[:, :, ::-1])
-        raw_text = _call_paddleocr_vl_ollama(full_pil, effective_paddle_model, num_predict=256)
+    parsed_lines: List[str] = []
+    line_confs: List[Optional[float]] = []
+    line_tok_counts: List[int] = []
+    line_tokens: List[Optional[List[Tuple[str, float]]]] = []
+    line_source_rows: List[Optional[List[Dict[str, Any]]]] = []
 
-    parsed_lines = [ln.strip() for ln in raw_text.splitlines() if ln.strip()]
+    if rows:
+        if len(rows) <= 9:
+            row_chunks = [rows]
+        else:
+            num_chunks = math.ceil(len(rows) / 8)
+            chunk_size = math.ceil(len(rows) / num_chunks)
+            row_chunks = [rows[i:i + chunk_size] for i in range(0, len(rows), chunk_size)]
+
+        for chunk_rows in row_chunks:
+            chunk_meta: Dict[str, Any] = {}
+            strip_pil = _build_paddleocr_vl_strip_image(chunk_rows, min_row_height=min_row_h)
+            raw_text = _call_paddleocr_vl_ollama(
+                strip_pil,
+                effective_paddle_model,
+                num_predict=256,
+                _meta_out=chunk_meta,
+            )
+            c_lines = [ln.strip() for ln in raw_text.splitlines() if ln.strip()]
+
+            # Detect repetition collapse or severe line drop in chunk -> recover row-by-row
+            collapsed = _has_ocr_repetition_collapse(c_lines) or (
+                len(chunk_rows) >= 4 and len(c_lines) <= len(chunk_rows) - 3
+            )
+            if collapsed:
+                for single_row in chunk_rows:
+                    try:
+                        s_txt, s_conf, s_cnt, s_toks = _ocr_single_row_paddleocr_vl(
+                            single_row,
+                            effective_paddle_model,
+                            min_row_height=max(64, min_row_h),
+                            num_predict=96,
+                        )
+                        if s_txt:
+                            parsed_lines.append(s_txt)
+                            line_confs.append(s_conf)
+                            line_tok_counts.append(s_cnt)
+                            line_tokens.append(s_toks)
+                            line_source_rows.append(single_row)
+                    except Exception as exc:
+                        logger.debug("PaddleOCR-VL collapse per-row fallback error: %s", exc)
+                continue
+
+            c_overall_conf: Optional[float] = chunk_meta.get("confidence")
+            c_overall_tok: int = int(chunk_meta.get("token_count") or 0)
+            c_confs: List[Optional[float]] = [c_overall_conf] * len(c_lines)
+            c_tok_counts: List[int] = (
+                [max(1, c_overall_tok // max(1, len(c_lines)))] * len(c_lines)
+                if c_overall_conf is not None
+                else [0] * len(c_lines)
+            )
+            split_stats = _split_logprobs_by_nonempty_lines(chunk_meta.get("logprobs"))
+            if c_lines and len(split_stats) == len(c_lines):
+                c_confs = [c for c, _ in split_stats]
+                c_tok_counts = [cnt for _, cnt in split_stats]
+
+            c_tokens: List[Optional[List[Tuple[str, float]]]] = [None] * len(c_lines)
+            split_toks = _split_token_probs_by_nonempty_lines(chunk_meta.get("logprobs"))
+            if c_lines and len(split_toks) == len(c_lines):
+                c_tokens = split_toks
+
+            aligned = len(c_lines) == len(chunk_rows)
+            for idx_in_chunk, ln in enumerate(c_lines):
+                parsed_lines.append(ln)
+                line_confs.append(c_confs[idx_in_chunk])
+                line_tok_counts.append(c_tok_counts[idx_in_chunk])
+                line_tokens.append(c_tokens[idx_in_chunk])
+                line_source_rows.append(chunk_rows[idx_in_chunk] if aligned else None)
+    else:
+        ocr_meta: Dict[str, Any] = {}
+        full_pil = Image.fromarray(img_bgr[:, :, ::-1])
+        raw_text = _call_paddleocr_vl_ollama(full_pil, effective_paddle_model, num_predict=256, _meta_out=ocr_meta)
+        parsed_lines = [ln.strip() for ln in raw_text.splitlines() if ln.strip()]
+        overall_conf: Optional[float] = ocr_meta.get("confidence")
+        overall_tok_cnt: int = int(ocr_meta.get("token_count") or 0)
+        line_confs = [overall_conf] * len(parsed_lines)
+        line_tok_counts = (
+            [max(1, overall_tok_cnt // max(1, len(parsed_lines)))] * len(parsed_lines)
+            if overall_conf is not None
+            else [0] * len(parsed_lines)
+        )
+        split_line_stats = _split_logprobs_by_nonempty_lines(ocr_meta.get("logprobs"))
+        if parsed_lines and len(split_line_stats) == len(parsed_lines):
+            line_confs = [c for c, _ in split_line_stats]
+            line_tok_counts = [cnt for _, cnt in split_line_stats]
+        line_tokens = [None] * len(parsed_lines)
+        split_tokens = _split_token_probs_by_nonempty_lines(ocr_meta.get("logprobs"))
+        if parsed_lines and len(split_tokens) == len(parsed_lines):
+            line_tokens = split_tokens
+        line_source_rows = [None] * len(parsed_lines)
 
     # Targeted 1-row retry ONLY if ID line on CMND/CCCD looks corrupted (e.g., red watermark '3520228/6')
     suspect_idx = _find_suspicious_id_line_index(parsed_lines)
     if suspect_idx is not None and rows:
-        candidate_row: Optional[List[Dict[str, Any]]] = None
-        if len(parsed_lines) == len(rows) and suspect_idx < len(rows):
-            candidate_row = rows[suspect_idx]
-        else:
+        candidate_row: Optional[List[Dict[str, Any]]] = (
+            line_source_rows[suspect_idx] if suspect_idx < len(line_source_rows) else None
+        )
+        if candidate_row is None:
             # Locate the row in upper-middle band (18%..48% height) matching suspect position
             upper_rows = [
                 r for r in rows
                 if 0.18 * h <= sum((it["bbox"][1] + it["bbox"][3]) / 2.0 for it in r) / len(r) <= 0.48 * h
             ]
             if upper_rows:
-                # Prefer row at suspect_idx if in upper_rows, else the row after title
                 if suspect_idx < len(rows) and rows[suspect_idx] in upper_rows:
                     candidate_row = rows[suspect_idx]
                 else:
@@ -1098,27 +1662,67 @@ def _extract_text_lines_paddleocr_vl(
 
         if candidate_row:
             try:
-                row_canvas = _build_paddleocr_vl_row_canvas(candidate_row, min_row_height=max(56, min_row_h))
-                margin = 14
-                padded_row = np.full(
-                    (row_canvas.shape[0] + margin * 2, row_canvas.shape[1] + margin * 2, 3),
-                    255,
-                    dtype=np.uint8,
+                refined_clean, refine_conf, refine_tok_cnt, refine_toks = _ocr_single_row_paddleocr_vl(
+                    candidate_row,
+                    effective_paddle_model,
+                    min_row_height=max(72, min_row_h),
+                    num_predict=64,
                 )
-                padded_row[margin:margin + row_canvas.shape[0], margin:margin + row_canvas.shape[1]] = row_canvas
-                refined_txt = _call_paddleocr_vl_ollama(Image.fromarray(padded_row), effective_paddle_model, num_predict=64)
-                refined_clean = " ".join(refined_txt.splitlines()).strip()
                 if re.search(r"(?<!\d)(?:\d{9}|\d{12})(?!\d)", refined_clean):
                     parsed_lines[suspect_idx] = refined_clean
+                    if refine_conf is not None:
+                        line_confs[suspect_idx] = refine_conf
+                        line_tok_counts[suspect_idx] = refine_tok_cnt
+                        line_tokens[suspect_idx] = refine_toks
             except Exception as exc:
                 logger.debug("PaddleOCR-VL ID-row refinement skipped: %s", exc)
 
+    # Adaptive low-confidence 1-row retry (up to 2 uncertain non-ID rows when real logprobs exist)
+    if rows and any(c is not None for c in line_confs):
+        low_conf_indices = sorted(
+            (
+                idx
+                for idx, conf_val in enumerate(line_confs)
+                if idx != suspect_idx
+                and idx < len(line_source_rows)
+                and line_source_rows[idx] is not None
+                and conf_val is not None
+                and float(conf_val) < 88.0
+                and len(parsed_lines[idx]) >= 3
+            ),
+            key=lambda i: float(line_confs[i]),  # type: ignore[arg-type]
+        )[:2]
+        for row_idx in low_conf_indices:
+            src_row = line_source_rows[row_idx]
+            if not src_row:
+                continue
+            try:
+                retry_clean, retry_conf, retry_tok_cnt, retry_toks = _ocr_single_row_paddleocr_vl(
+                    src_row,
+                    effective_paddle_model,
+                    min_row_height=max(72, min_row_h),
+                    num_predict=96,
+                )
+                old_conf = line_confs[row_idx]
+                if retry_clean and retry_conf is not None and old_conf is not None and float(retry_conf) > float(old_conf):
+                    parsed_lines[row_idx] = retry_clean
+                    line_confs[row_idx] = float(retry_conf)
+                    line_tok_counts[row_idx] = retry_tok_cnt
+                    line_tokens[row_idx] = retry_toks
+            except Exception as exc:
+                logger.debug("PaddleOCR-VL low-confidence row retry skipped (row=%s): %s", row_idx, exc)
+
     paddleocr_vl_ms = round((time.perf_counter() - t_ocr0) * 1000.0, 1)
 
-    ocr_lines = [
-        {"bbox": [0, idx * 20, 100, idx * 20 + 18], "text": ln}
-        for idx, ln in enumerate(parsed_lines)
-    ]
+    ocr_lines = []
+    for idx, ln in enumerate(parsed_lines):
+        item: Dict[str, Any] = {"bbox": [0, idx * 20, 100, idx * 20 + 18], "text": ln}
+        if idx < len(line_confs) and line_confs[idx] is not None:
+            item["confidence"] = line_confs[idx]
+            item["token_count"] = line_tok_counts[idx]
+        if idx < len(line_tokens) and line_tokens[idx]:
+            item["tokens"] = line_tokens[idx]
+        ocr_lines.append(item)
     return ocr_lines, det_ms, paddleocr_vl_ms
 
 
@@ -1129,6 +1733,7 @@ def _postprocess_hybrid_extracted_data(data: Dict[str, Any], lines: List[Dict[st
       - Recover 'Không thời hạn' if present in OCR lines.
       - Normalize ISO YYYY-MM-DD back to DD/MM/YYYY when matching raw OCR date.
       - Avoid mapping CMND 'Dân tộc: Kinh' into nationality='Kinh'.
+      - Clean address label prefixes and normalize Vietnamese administrative divisions via GSO/NSO datasets.
     """
     if not isinstance(data, dict) or not lines:
         return data
@@ -1171,16 +1776,18 @@ def _postprocess_hybrid_extracted_data(data: Dict[str, Any], lines: List[Dict[st
         if isinstance(nat, str) and nat.strip().lower() == "kinh" and "dân tộc" in low_text:
             data["nationality"] = "Việt Nam" if "việt nam" in low_text else None
 
-        for addr_field in ("origin_address", "residence_address"):
-            addr_val = data.get(addr_field)
-            if isinstance(addr_val, str):
-                cleaned_addr = re.sub(
-                    r"^(?:(?:quê\s*qu[aáảà]n|nguy[eê]n\s*qu[aáảà]n|n[ơo]i\s*đkhk\s*th[ưư][ơờ]ng\s*tr[uúủù]|n[ơo]i\s*th[ưư][ơờ]ng\s*tr[uúủù]|n[ơo]i\s*c[ưư]\s*tr[uúủù])(?:\s*/\s*place\s*of\s*(?:origin|residence))?|/?\s*place\s*of\s*(?:origin|residence))\s*[:;,\-]?\s*",
-                    "",
-                    addr_val.strip(),
-                    flags=re.IGNORECASE,
-                ).strip()
-                data[addr_field] = cleaned_addr or None
+    for addr_field in ("origin_address", "residence_address"):
+        addr_val = data.get(addr_field)
+        if isinstance(addr_val, str):
+            cleaned_addr = re.sub(
+                r"^(?:(?:quê\s*qu[aáảà]n|nguy[eê]n\s*qu[aáảà]n|n[ơo]i\s*đkhk\s*th[ưư][ơờ]ng\s*tr[uúủù]|n[ơo]i\s*th[ưư][ơờ]ng\s*tr[uúủù]|n[ơo]i\s*c[ưư]\s*tr[uúủù])(?:\s*/\s*place\s*of\s*(?:origin|residence))?|/?\s*place\s*of\s*(?:origin|residence))\s*[:;,\-]?\s*",
+                "",
+                addr_val.strip(),
+                flags=re.IGNORECASE,
+            ).strip()
+            if cleaned_addr:
+                cleaned_addr = normalize_vietnamese_address(cleaned_addr) or cleaned_addr
+            data[addr_field] = cleaned_addr or None
 
     return data
 
@@ -1456,6 +2063,7 @@ class OCREngineService:
                 },
             ],
             "stream": False,
+            "logprobs": True,
             "format": "json",
             "options": {
                 "temperature": 0.0,
@@ -1502,9 +2110,76 @@ class OCREngineService:
         extracted_data.pop("document_bbox", None)
         extracted_data.pop("orientation_angle", None)
 
+        # Compute real confidence score from PaddleOCR-VL + Text LLM token logprobs
+        line_conf_pairs = [
+            (float(it["confidence"]), max(1, int(it.get("token_count") or 1)))
+            for it in ocr_lines
+            if isinstance(it, dict) and it.get("confidence") is not None
+        ]
+        if line_conf_pairs:
+            total_tok = sum(cnt for _, cnt in line_conf_pairs)
+            ocr_confidence: Optional[float] = round(
+                sum(c * cnt for c, cnt in line_conf_pairs) / max(1, total_tok), 2
+            )
+        else:
+            ocr_confidence = None
+
+        llm_confidence, _ = _compute_confidence_from_logprobs(resp_data.get("logprobs"))
+
+        if "error" in extracted_data or not ocr_lines:
+            confidence_score = 0.0
+            confidence_source = "no_ocr_text_or_parse_error"
+        elif ocr_confidence is not None and llm_confidence is not None:
+            confidence_score = round(0.80 * ocr_confidence + 0.20 * llm_confidence, 2)
+            confidence_source = "model_logprobs"
+        elif ocr_confidence is not None:
+            confidence_score = round(ocr_confidence, 2)
+            confidence_source = "paddleocr_vl_logprobs"
+        elif llm_confidence is not None:
+            confidence_score = round(llm_confidence, 2)
+            confidence_source = "llm_logprobs"
+        else:
+            # Fallback only when mocked/legacy Ollama responses omit logprobs
+            field_keys = [k for k in extracted_data.keys() if k != "document_type"]
+            non_empty = sum(1 for k in field_keys if extracted_data.get(k) not in (None, "", []))
+            ratio = non_empty / max(1, len(field_keys))
+            confidence_score = round(50.0 + 45.0 * ratio, 2)
+            confidence_source = "heuristic_fallback"
+
+        # Compute per-field confidence scores from PaddleOCR-VL token spans + LLM value logprobs
+        field_confidences: Dict[str, float] = {}
+        if "error" not in extracted_data and ocr_lines:
+            full_ocr_text, full_char_probs = _build_ocr_char_prob_map(ocr_lines)
+            norm_ocr, norm_map = _collapse_ws_with_map(full_ocr_text, strip_accents=False)
+            ascii_ocr, ascii_map = _collapse_ws_with_map(full_ocr_text, strip_accents=True)
+            llm_field_confs = _extract_llm_field_confidences(resp_data.get("logprobs"))
+
+            for key, val in extracted_data.items():
+                if val is None or val == "" or val == []:
+                    continue
+                llm_f = llm_field_confs.get(key)
+                if key in ("document_type", "card_subtype"):
+                    if llm_f is not None:
+                        field_confidences[key] = round(llm_f, 2)
+                    continue
+                val_str = str(val).strip()
+                ocr_f = _match_value_ocr_confidence(
+                    val_str, norm_ocr, norm_map, ascii_ocr, ascii_map, full_char_probs
+                )
+                if ocr_f is not None and llm_f is not None:
+                    field_confidences[key] = round(0.80 * ocr_f + 0.20 * llm_f, 2)
+                elif ocr_f is not None:
+                    field_confidences[key] = round(ocr_f, 2)
+                elif llm_f is not None:
+                    field_confidences[key] = round(llm_f, 2)
+
         seg_meta.pipeline_mode = "hybrid_paddle_vl"
         seg_meta.ocr_lines_count = len(ocr_lines)
         seg_meta.stage_timings_ms = stage_timings_ms
+        seg_meta.ocr_confidence = ocr_confidence
+        seg_meta.llm_confidence = llm_confidence
+        seg_meta.confidence_source = confidence_source
+        seg_meta.field_confidences = field_confidences
 
         detected_type = extracted_data.get("document_type", "identity_document")
         job_id = _generate_unique_job_id(db)
@@ -1561,7 +2236,7 @@ class OCREngineService:
             file_type=file_type,
             detected_type=detected_type,
             status="completed",
-            confidence_score=99.2,
+            confidence_score=confidence_score,
             execution_time_ms=execution_time_ms,
             extracted_data_json=json.dumps(extracted_data, ensure_ascii=False),
             segmentation_info_json=seg_meta.model_dump_json(),
@@ -1591,7 +2266,8 @@ class OCREngineService:
             service_id=lic.service_id,
             service_name=service_name,
             license_id=lic.id,
-            confidence_score=99.2,
+            confidence_score=confidence_score,
+            field_confidences=field_confidences,
             execution_time_ms=execution_time_ms,
             extracted_data=extracted_data,
             original_image_url=orig_url,
@@ -1661,7 +2337,8 @@ class OCREngineService:
                     service_id=row.service_id,
                     service_name=row.service_name or "ID Document & Passport OCR",
                     license_id=row.license_id,
-                    confidence_score=row.confidence_score if row.confidence_score is not None else 99.2,
+                    confidence_score=row.confidence_score if row.confidence_score is not None else 0.0,
+                    field_confidences=seg_info.field_confidences if seg_info and seg_info.field_confidences else {},
                     execution_time_ms=row.execution_time_ms or 0,
                     extracted_data=extracted_data,
                     original_image_url=orig_url,

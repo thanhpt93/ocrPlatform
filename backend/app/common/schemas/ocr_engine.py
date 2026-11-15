@@ -55,6 +55,10 @@ class SegmentationMetadata(BaseModel):
     pipeline_mode: str = Field("hybrid_paddle_vl", description="OCR pipeline mode used (hybrid_paddle_vl or vlm)")
     ocr_lines_count: int = Field(0, description="Number of text lines recognized by PaddleOCR-VL in hybrid mode")
     stage_timings_ms: Dict[str, float] = Field(default_factory=dict, description="Per-stage latency breakdown in ms")
+    ocr_confidence: Optional[float] = Field(None, description="Mean token confidence (%) returned by PaddleOCR-VL")
+    llm_confidence: Optional[float] = Field(None, description="Mean token confidence (%) returned by Text LLM")
+    confidence_source: str = Field("model_logprobs", description="Source used to compute confidence_score")
+    field_confidences: Dict[str, float] = Field(default_factory=dict, description="Per-field confidence scores (%)")
 
 class OCRExtractionResponse(BaseModel):
     job_id: str
@@ -65,6 +69,7 @@ class OCRExtractionResponse(BaseModel):
     service_name: str
     license_id: str
     confidence_score: float
+    field_confidences: Dict[str, float] = Field(default_factory=dict, description="Per-field confidence scores (%)")
     execution_time_ms: int
     extracted_data: Dict[str, Any]
     original_image_url: Optional[str] = Field(None, description="Data URL of original uploaded image")
@@ -84,7 +89,8 @@ class OCRJobHistoryItem(BaseModel):
     service_id: Optional[str] = None
     service_name: str = ""
     license_id: Optional[str] = None
-    confidence_score: float = 99.2
+    confidence_score: float = 0.0
+    field_confidences: Dict[str, float] = Field(default_factory=dict, description="Per-field confidence scores (%)")
     execution_time_ms: int = 0
     extracted_data: Dict[str, Any] = Field(default_factory=dict)
     original_image_url: Optional[str] = None

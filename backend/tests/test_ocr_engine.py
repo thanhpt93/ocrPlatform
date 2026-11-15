@@ -749,3 +749,378 @@ def test_ocr_jobs_persistence_and_secure_image_serving(
     assert client.get(base_cropped_url, headers={"Authorization": f"Bearer {customer_one_token}"}).status_code == 200
     assert client.get(base_cropped_url, headers={"Authorization": f"Bearer {admin_token}"}).status_code == 200
     assert client.get(f"/api/v1/ocr/jobs/{job_ids[1]}/image/invalid", headers={"Authorization": f"Bearer {customer_one_token}"}).status_code == 400
+
+
+def test_real_model_confidence_from_logprobs_and_refinement(client, db, customer_one_token):
+    import math
+    from app.modules.ocr_engine.service import (
+        _compute_confidence_from_logprobs,
+        _extract_text_lines_paddleocr_vl,
+    )
+
+    # 1. Unit check on logprob -> probability % calculation (ignores newline-only tokens)
+    conf, cnt = _compute_confidence_from_logprobs([
+        {"token": "A", "logprob": math.log(0.90)},
+        {"token": "\n", "logprob": math.log(0.10)},
+        {"token": "B", "logprob": math.log(0.80)},
+    ])
+    assert cnt == 2
+    assert conf == 85.0
+
+    # 2. Verify end-to-end process-identity computes weighted 80% PaddleOCR-VL + 20% LLM confidence
+    packages = client.get("/api/v1/packages/pkg-test-1").json()
+    version_id = packages["current_version"]["id"]
+    order_id = client.post(
+        "/api/v1/orders",
+        headers={"Authorization": f"Bearer {customer_one_token}"},
+        json={"package_version_id": version_id},
+    ).json()["id"]
+    license_id = client.post(
+        f"/api/v1/orders/{order_id}/checkout",
+        headers={"Authorization": f"Bearer {customer_one_token}"},
+        json={"payment_method": "mock_card"},
+    ).json()["license_id"]
+
+    sample_img = make_sample_id_with_background_bytes()
+    fake_lines = [
+        {"bbox": [10, 10, 200, 35], "text": "Số / No.: 001202012345", "confidence": 90.0, "token_count": 4},
+        {"bbox": [10, 40, 240, 65], "text": "NGUYỄN VĂN AN", "confidence": 80.0, "token_count": 4},
+    ]
+    llm_mock_resp = MagicMock()
+    llm_mock_resp.status = 200
+    llm_mock_resp.read.return_value = json.dumps({
+        "message": {"role": "assistant", "content": json.dumps(SAMPLE_ID_CARD_JSON)},
+        "logprobs": [
+            {"token": "{", "logprob": math.log(1.0)},
+            {"token": "001202012345", "logprob": math.log(0.90)},
+        ],
+    }).encode("utf-8")
+
+    with patch("app.modules.ocr_engine.service._extract_text_lines_paddleocr_vl", return_value=(fake_lines, 100.0, 900.0)), \
+         patch("urllib.request.urlopen") as mock_url:
+        mock_url.return_value.__enter__.return_value = llm_mock_resp
+        res = client.post(
+            "/api/v1/ocr/process-identity",
+            headers={"Authorization": f"Bearer {customer_one_token}"},
+            files={"file": ("cccd_real_conf.jpg", io.BytesIO(sample_img), "image/jpeg")},
+            data={"license_id": license_id},
+        )
+
+    assert res.status_code == 200
+    body = res.json()
+    # OCR mean = (90*4 + 80*4)/8 = 85.0; LLM mean = (100 + 90)/2 = 95.0; combined = 0.8*85 + 0.2*95 = 87.0
+    assert body["confidence_score"] == 87.0
+    assert body["segmentation_info"]["ocr_confidence"] == 85.0
+    assert body["segmentation_info"]["llm_confidence"] == 95.0
+    assert body["segmentation_info"]["confidence_source"] == "model_logprobs"
+
+    # Verify persisted job history returns real score instead of 99.2
+    jobs = client.get("/api/v1/ocr/jobs", headers={"Authorization": f"Bearer {customer_one_token}"}).json()
+    matched = [j for j in jobs if j["job_id"] == body["job_id"]]
+    assert len(matched) == 1
+    assert matched[0]["confidence_score"] == 87.0
+
+
+def test_per_field_confidence_from_ocr_tokens_and_llm_json_logprobs(client, customer_one_token):
+    import math
+    from app.modules.ocr_engine.service import _extract_llm_field_confidences
+
+    # 1. Verify exact JSON value span logprob extraction
+    llm_tokens = [
+        ('{"document_type": "', math.log(1.0)),
+        ("id_card", math.log(0.95)),
+        ('", "id_number": "', math.log(1.0)),
+        ("086187", math.log(0.90)),
+        ("000717", math.log(1.0)),
+        ('", "full_name": "', math.log(1.0)),
+        ("NGUYỄN VĂN AN", math.log(0.80)),
+        ('", "issue_date": null}', math.log(1.0)),
+    ]
+    llm_logprobs = [{"token": t, "logprob": lp} for t, lp in llm_tokens]
+    field_llm = _extract_llm_field_confidences(llm_logprobs)
+    assert field_llm["document_type"] == 95.0
+    assert field_llm["id_number"] == 95.0  # 6 chars @90% + 6 chars @100%
+    assert field_llm["full_name"] == 80.0
+    assert "issue_date" not in field_llm
+
+    # 2. Verify end-to-end per-field confidence combines 80% PaddleOCR-VL token span + 20% LLM field value
+    packages = client.get("/api/v1/packages/pkg-test-1").json()
+    version_id = packages["current_version"]["id"]
+    order_id = client.post(
+        "/api/v1/orders",
+        headers={"Authorization": f"Bearer {customer_one_token}"},
+        json={"package_version_id": version_id},
+    ).json()["id"]
+    license_id = client.post(
+        f"/api/v1/orders/{order_id}/checkout",
+        headers={"Authorization": f"Bearer {customer_one_token}"},
+        json={"payment_method": "mock_card"},
+    ).json()["license_id"]
+
+    fake_lines = [
+        {
+            "bbox": [10, 10, 200, 35],
+            "text": "Số: 086187000717",
+            "confidence": 90.0,
+            "token_count": 3,
+            "tokens": [("Số: ", 99.0), ("086187", 80.0), ("000717", 100.0)],
+        },
+        {
+            "bbox": [10, 40, 240, 65],
+            "text": "NGUYỄN VĂN AN",
+            "confidence": 75.0,
+            "token_count": 2,
+            "tokens": [("NGUYỄN VĂN ", 70.0), ("AN", 95.0)],
+        },
+    ]
+    llm_raw = "".join(t for t, _ in llm_tokens)
+    llm_resp = MagicMock()
+    llm_resp.status = 200
+    llm_resp.read.return_value = json.dumps({
+        "message": {"role": "assistant", "content": llm_raw},
+        "logprobs": llm_logprobs,
+    }).encode("utf-8")
+
+    sample_img = make_sample_id_with_background_bytes()
+    with patch("app.modules.ocr_engine.service._extract_text_lines_paddleocr_vl", return_value=(fake_lines, 80.0, 700.0)), \
+         patch("urllib.request.urlopen") as mock_url:
+        mock_url.return_value.__enter__.return_value = llm_resp
+        res = client.post(
+            "/api/v1/ocr/process-identity",
+            headers={"Authorization": f"Bearer {customer_one_token}"},
+            files={"file": ("cccd_field_conf.jpg", io.BytesIO(sample_img), "image/jpeg")},
+            data={"license_id": license_id},
+        )
+
+    assert res.status_code == 200
+    body = res.json()
+    fc = body["field_confidences"]
+    assert fc["document_type"] == 95.0
+    # id_number: OCR=(80*6 + 100*6)/12=90.0, LLM=95.0 -> 0.8*90 + 0.2*95 = 91.0
+    assert fc["id_number"] == 91.0
+    # full_name: OCR=(70*11 + 95*2)/13=73.85, LLM=80.0 -> 0.8*73.85 + 0.2*80 = 75.08
+    assert abs(fc["full_name"] - 75.08) < 0.05
+    assert body["segmentation_info"]["field_confidences"] == fc
+
+    jobs = client.get("/api/v1/ocr/jobs", headers={"Authorization": f"Bearer {customer_one_token}"}).json()
+    matched = [j for j in jobs if j["job_id"] == body["job_id"]]
+    assert matched[0]["field_confidences"] == fc
+
+
+def test_lossless_png_intermediate_encoding():
+    from app.modules.ocr_engine.service import (
+        normalize_image_bytes,
+        _encode_vlm_image_bytes,
+        _encode_preview_data_url,
+        _call_paddleocr_vl_ollama,
+    )
+
+    sample_jpg = make_sample_id_with_background_bytes()
+    norm_bytes = normalize_image_bytes(sample_jpg)
+    with Image.open(io.BytesIO(norm_bytes)) as norm_img:
+        assert norm_img.format == "PNG"
+
+    vlm_bytes = _encode_vlm_image_bytes(Image.new("RGB", (600, 380), color=(240, 240, 240)), max_dimension=1280)
+    with Image.open(io.BytesIO(vlm_bytes)) as vlm_img:
+        assert vlm_img.format == "PNG"
+
+    # Preview data URL intentionally stays JPEG for lightweight UI/storage
+    assert _encode_preview_data_url(Image.new("RGB", (200, 120))).startswith("data:image/jpeg;base64,")
+
+    fake_resp = MagicMock()
+    fake_resp.status = 200
+    fake_resp.read.return_value = json.dumps({"message": {"content": "TEST"}}).encode("utf-8")
+    with patch("urllib.request.urlopen") as mock_url:
+        mock_url.return_value.__enter__.return_value = fake_resp
+        _call_paddleocr_vl_ollama(Image.new("RGB", (120, 40), color=(255, 255, 255)), "paddleocr-vl-vi")
+    sent_payload = json.loads(mock_url.call_args[0][0].data.decode("utf-8"))
+    sent_img_bytes = base64.b64decode(sent_payload["messages"][0]["images"][0])
+    assert sent_img_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_vertical_padding_adaptive_enhancement_and_low_conf_row_retry():
+    import math
+    import numpy as np
+    import cv2
+    from app.modules.ocr_engine.service import (
+        _detect_text_boxes_bgr,
+        _enhance_row_for_ocr,
+        _extract_text_lines_paddleocr_vl,
+    )
+
+    # 1. Verify asymmetric vertical padding >= 5px protects diacritics
+    canvas_img = Image.new("RGB", (600, 300), color=(245, 245, 245))
+    buf = io.BytesIO()
+    canvas_img.save(buf, format="PNG")
+    fake_det = MagicMock()
+    # RapidOCR sees padded (+20px) coords, so [120, 120] -> [320, 160] corresponds to [100, 100]..[300, 140] (h=40)
+    fake_det.return_value = ([[[120, 120], [320, 120], [320, 160], [120, 160]]], None)
+    with patch("app.modules.ocr_engine.service._get_rapidocr_det", return_value=fake_det):
+        _, items, _ = _detect_text_boxes_bgr(buf.getvalue(), box_pad_px=3)
+    assert len(items) == 1
+    x1, y1, x2, y2 = items[0]["bbox"]
+    assert x1 == 97 and x2 == 303  # pad_x = 3
+    assert y1 <= 94 and y2 >= 146  # pad_y >= 6 for h=40 (int(40*0.14)=6)
+
+    # 2. Verify Laplacian blur detection triggers CLAHE + Unsharp Masking
+    sharp_rgb = np.full((60, 240, 3), 245, dtype=np.uint8)
+    cv2.putText(sharp_rgb, "VIET NAM", (15, 45), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (20, 20, 20), 2)
+    blurry_rgb = cv2.GaussianBlur(sharp_rgb, (9, 9), 2.5)
+
+    _, lap_sharp, enhanced_sharp = _enhance_row_for_ocr(sharp_rgb, orig_row_height=60, force_enhance=False)
+    out_blur, lap_blur, enhanced_blur = _enhance_row_for_ocr(blurry_rgb, orig_row_height=24, force_enhance=False)
+    assert lap_sharp > lap_blur
+    assert enhanced_sharp is False
+    assert enhanced_blur is True
+    assert out_blur.shape == blurry_rgb.shape
+
+    # 3. Verify adaptive low-confidence row retry when strip logprobs contain an uncertain non-ID line
+    fake_bgr = np.full((300, 500, 3), 240, dtype=np.uint8)
+    fake_boxes = [
+        {"bbox": [50, 20, 400, 45], "crop_rgb": np.full((25, 350, 3), 230, dtype=np.uint8)},
+        {"bbox": [50, 60, 320, 88], "crop_rgb": np.full((28, 270, 3), 230, dtype=np.uint8)},
+        {"bbox": [50, 110, 420, 140], "crop_rgb": np.full((30, 370, 3), 230, dtype=np.uint8)},
+    ]
+
+    strip_resp = MagicMock()
+    strip_resp.status = 200
+    strip_resp.read.return_value = json.dumps({
+        "message": {"content": "Số: 086187000717\nHọ tên: HUỢNH THỔ\nQuê quán: Vĩnh Long"},
+        "logprobs": [
+            {"token": "Số: 086187000717\n", "logprob": math.log(0.99)},
+            {"token": "Họ tên: ", "logprob": math.log(0.95)},
+            {"token": "HUỢNH THỔ\n", "logprob": math.log(0.55)},
+            {"token": "Quê quán: Vĩnh Long", "logprob": math.log(0.98)},
+        ],
+    }).encode("utf-8")
+
+    retry_resp = MagicMock()
+    retry_resp.status = 200
+    retry_resp.read.return_value = json.dumps({
+        "message": {"content": "Họ tên: HUỲNH THẢO"},
+        "logprobs": [
+            {"token": "Họ tên: ", "logprob": math.log(0.98)},
+            {"token": "HUỲNH THẢO", "logprob": math.log(0.96)},
+        ],
+    }).encode("utf-8")
+
+    with patch("app.modules.ocr_engine.service._detect_text_boxes_bgr", return_value=(fake_bgr, fake_boxes, 30.0)), \
+         patch("urllib.request.urlopen") as mock_url:
+        mock_url.return_value.__enter__.side_effect = [strip_resp, retry_resp]
+        ocr_lines, _, _ = _extract_text_lines_paddleocr_vl(buf.getvalue())
+
+    assert mock_url.return_value.__enter__.call_count == 2
+    assert ocr_lines[1]["text"] == "Họ tên: HUỲNH THẢO"
+    assert ocr_lines[1]["confidence"] >= 96.0
+
+
+def test_vn_address_normalizer_gso_nso_and_postprocess():
+    from app.modules.ocr_engine.vn_address_normalizer import normalize_vietnamese_address
+    from app.modules.ocr_engine.service import _postprocess_hybrid_extracted_data
+
+    # Legacy 3-tier GSO normalization (accent loss + typo repair, preserving street/hamlet & style)
+    assert (
+        normalize_vietnamese_address("Ấp 4, Trung Nghia, Vũng Liềm, Vinh Long")
+        == "Ấp 4, Trung Nghĩa, Vũng Liêm, Vĩnh Long"
+    )
+    assert (
+        normalize_vietnamese_address("Xã Trung Nghia, H. Vung Liem, Tỉnh Vinh Long")
+        == "Xã Trung Nghĩa, Huyện Vũng Liêm, Tỉnh Vĩnh Long"
+    )
+    assert (
+        normalize_vietnamese_address("Thôn Tiền Lệ, Tiên Yên, Hoài Đúc, Ha Noi")
+        == "Thôn Tiền Lệ, Tiền Yên, Hoài Đức, Hà Nội"
+    )
+
+    # 2025 2-tier NSO normalization (no district level, includes Đặc khu & TP.HCM alias)
+    assert (
+        normalize_vietnamese_address("Phuong Ba Dinh, Thanh pho Ha Noi")
+        == "Phường Ba Đình, Thành phố Hà Nội"
+    )
+    assert (
+        normalize_vietnamese_address("Đặc khu Phu Quoc, Tỉnh An Giang")
+        == "Đặc khu Phú Quốc, Tỉnh An Giang"
+    )
+    assert (
+        normalize_vietnamese_address("Số 12 Lê Lợi, Phường Bến Nghé, Quận 1, TP.HCM")
+        == "Số 12 Lê Lợi, Phường Bến Nghé, Quận 1, Thành phố Hồ Chí Minh"
+    )
+    # Legacy historical ward before merger still safely expands 'X.' without forcing a wrong ward name
+    assert (
+        normalize_vietnamese_address("X. Vạn Thái, H. Ứng Hòa, TP. Hà Nội")
+        == "Xã Vạn Thái, Huyện Ứng Hòa, Thành phố Hà Nội"
+    )
+    # Sub-ward unit diacritic repair (e.g. 'Áp 4'/'Ap 4' -> 'Ấp 4', 'To 5' -> 'Tổ 5', protects 'Tô Hiệu')
+    assert (
+        normalize_vietnamese_address("Áp 4, Trung Nghĩa, Vũng Liêm, Vĩnh Long")
+        == "Ấp 4, Trung Nghĩa, Vũng Liêm, Vĩnh Long"
+    )
+    assert (
+        normalize_vietnamese_address("Ap 4, Trung Nghia, Vũng Liêm, Vinh Long")
+        == "Ấp 4, Trung Nghĩa, Vũng Liêm, Vĩnh Long"
+    )
+    assert (
+        normalize_vietnamese_address("To 5, Khu pho 2, Phường Bến Nghé, Quận 1, TP.HCM")
+        == "Tổ 5, Khu phố 2, Phường Bến Nghé, Quận 1, Thành phố Hồ Chí Minh"
+    )
+    assert (
+        normalize_vietnamese_address("12 Tô Hiệu, Phường Nguyễn Trãi, Quận Hà Đông, Hà Nội")
+        == "12 Tô Hiệu, Phường Nguyễn Trãi, Quận Hà Đông, Hà Nội"
+    )
+    # Historical commune before merger must NOT be over-corrected to a different commune ('Thiệu Phú' != 'Thiệu Phúc')
+    assert (
+        normalize_vietnamese_address("Thôn Đình Tân, Thiệu Phú, Thiệu Hóa, Thanh Hóa")
+        == "Thôn Đình Tân, Thiệu Phú, Thiệu Hóa, Thanh Hóa"
+    )
+
+    # Foreign/non-matching address left untouched
+    assert normalize_vietnamese_address("Tokyo, Japan") == "Tokyo, Japan"
+
+    # Postprocess integration normalizes both origin_address and residence_address
+    cleaned = _postprocess_hybrid_extracted_data(
+        {
+            "document_type": "id_card",
+            "origin_address": "Quê quán: Trung Nghia, Vũng Liềm, Vinh Long",
+            "residence_address": "Nơi thường trú: Ấp 4, Trung Nghia, Vũng Liềm, Vinh Long",
+        },
+        [{"bbox": [0, 0, 100, 20], "text": "Quê quán: Trung Nghia"}],
+    )
+    assert cleaned["origin_address"] == "Trung Nghĩa, Vũng Liêm, Vĩnh Long"
+    assert cleaned["residence_address"] == "Ấp 4, Trung Nghĩa, Vũng Liêm, Vĩnh Long"
+
+
+def test_paddleocr_vl_strip_chunking_and_repetition_collapse_fallback():
+    import numpy as np
+    from app.modules.ocr_engine.service import (
+        _has_ocr_repetition_collapse,
+        _extract_text_lines_paddleocr_vl,
+    )
+
+    assert _has_ocr_repetition_collapse([
+        "Ngành Thanh Hóa, Thành Hóa, Thành Hóa, Thành Hóa, Thành Hóa, Thành Hóa"
+    ]) is True
+    assert _has_ocr_repetition_collapse(["Quê quán: Thiệu Phú, Thiệu Hóa, Thanh Hóa"]) is False
+
+    # Build 12 synthetic rows (>9) -> must auto-split into 2 chunks (6 + 6)
+    # First chunk succeeds cleanly; second chunk returns a collapsed repeating line -> recovers row-by-row
+    buf = io.BytesIO()
+    Image.new("RGB", (600, 500), color=(240, 240, 240)).save(buf, format="PNG")
+    fake_bgr = np.full((500, 600, 3), 240, dtype=np.uint8)
+    fake_boxes = [
+        {"bbox": [40, 20 + i * 35, 360, 46 + i * 35], "crop_rgb": np.full((26, 320, 3), 230, dtype=np.uint8)}
+        for i in range(12)
+    ]
+
+    chunk1_txt = "\n".join([f"LINE {i}" for i in range(1, 7)])
+    collapsed_chunk2 = "Ngành Thanh Hóa, Thành Hóa, Thành Hóa, Thành Hóa, Thành Hóa, Thành Hóa"
+    fallback_rows = [f"RECOVERED {i}" for i in range(7, 13)]
+
+    with patch("app.modules.ocr_engine.service._detect_text_boxes_bgr", return_value=(fake_bgr, fake_boxes, 25.0)), \
+         patch(
+             "app.modules.ocr_engine.service._call_paddleocr_vl_ollama",
+             side_effect=[chunk1_txt, collapsed_chunk2, *fallback_rows],
+         ) as mock_call:
+        ocr_lines, _, _ = _extract_text_lines_paddleocr_vl(buf.getvalue())
+
+    assert mock_call.call_count == 8  # 2 strip chunks + 6 recovered per-row calls
+    assert [ln["text"] for ln in ocr_lines] == [f"LINE {i}" for i in range(1, 7)] + fallback_rows

@@ -267,7 +267,8 @@ export const JobsPage: React.FC = () => {
           completionTime: nowStr,
           pageCount: 1,
           processingDurationMs: res.execution_time_ms || 1200,
-          confidenceScore: res.confidence_score || 99.2,
+          confidenceScore: res.confidence_score ?? undefined,
+          fieldConfidences: res.field_confidences || res.segmentation_info?.field_confidences || undefined,
           extractedDataPreview: res.extracted_data,
           originalImageUrl: res.original_image_url,
           croppedImageUrl: res.cropped_image_url,
@@ -314,7 +315,7 @@ export const JobsPage: React.FC = () => {
         docTypeName: docTypes.find((d) => d.id === srv.supportedDocTypeIds?.[0])?.name || 'Standard OCR Document',
         pageCount: 1,
         processingDurationMs: 1420,
-        confidenceScore: 99.2,
+        confidenceScore: 0,
         extractedDataPreview: {
           note: 'Mock execution (vui lòng chọn file ảnh thật để kích hoạt Hybrid PaddleOCR-VL)',
           file: fileName,
@@ -478,7 +479,7 @@ export const JobsPage: React.FC = () => {
                         {job.status === 'failed' && <Badge variant="danger">Failed</Badge>}
                       </td>
                       <td className="py-3.5 px-4 font-mono">
-                        {job.confidenceScore ? `${job.confidenceScore.toFixed(1)}%` : '—'}
+                        {job.confidenceScore !== undefined && job.confidenceScore !== null ? `${job.confidenceScore.toFixed(1)}%` : '—'}
                       </td>
                       <td className="py-3.5 px-4 text-slate-500 whitespace-nowrap">
                         {job.submissionTime}
@@ -541,7 +542,7 @@ export const JobsPage: React.FC = () => {
               <div>
                 <span className="block text-[10px] text-slate-400 font-medium uppercase">Độ tin cậy (Confidence)</span>
                 <span className="text-xs font-semibold text-emerald-600 font-mono">
-                  {selectedJob.confidenceScore ? `${selectedJob.confidenceScore.toFixed(1)}%` : '—'}
+                  {selectedJob.confidenceScore !== undefined && selectedJob.confidenceScore !== null ? `${selectedJob.confidenceScore.toFixed(1)}%` : '—'}
                 </span>
               </div>
               <div>
@@ -721,6 +722,12 @@ export const JobsPage: React.FC = () => {
                           {selectedJob.segmentationInfo.stage_timings_ms.vlm_ms !== undefined && (
                             <span>VLM: {Math.round(selectedJob.segmentationInfo.stage_timings_ms.vlm_ms)}ms</span>
                           )}
+                          {selectedJob.segmentationInfo.ocr_confidence !== undefined && selectedJob.segmentationInfo.ocr_confidence !== null && (
+                            <span>OCR Conf: {selectedJob.segmentationInfo.ocr_confidence.toFixed(1)}%</span>
+                          )}
+                          {selectedJob.segmentationInfo.llm_confidence !== undefined && selectedJob.segmentationInfo.llm_confidence !== null && (
+                            <span>LLM Conf: {selectedJob.segmentationInfo.llm_confidence.toFixed(1)}%</span>
+                          )}
                         </div>
                       )}
                     </div>
@@ -745,23 +752,42 @@ export const JobsPage: React.FC = () => {
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 bg-slate-50/80 p-3.5 rounded-xl border border-slate-200">
                   {Object.entries(selectedJob.extractedDataPreview)
                     .filter(([_, val]) => val !== null && val !== undefined && val !== '')
-                    .map(([key, val]) => (
-                      <div
-                        key={key}
-                        className={`bg-white p-2.5 rounded-lg border border-slate-200/80 shadow-2xs ${
-                          key === 'residence_address' || key === 'origin_address' || key.startsWith('mrz_')
-                            ? 'sm:col-span-2 lg:col-span-3'
-                            : ''
-                        }`}
-                      >
-                        <span className="block text-[10px] font-medium text-slate-400 uppercase tracking-wide">
-                          {FIELD_LABELS[key] || key.replace(/_/g, ' ')}
-                        </span>
-                        <span className="text-xs font-semibold text-slate-900 mt-0.5 block break-words font-mono">
-                          {typeof val === 'object' ? JSON.stringify(val) : String(val)}
-                        </span>
-                      </div>
-                    ))}
+                    .map(([key, val]) => {
+                      const fieldConfMap = selectedJob.fieldConfidences || selectedJob.segmentationInfo?.field_confidences;
+                      const fieldConf = fieldConfMap ? fieldConfMap[key] : undefined;
+                      const confClass =
+                        fieldConf === undefined
+                          ? ''
+                          : fieldConf >= 90
+                          ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                          : fieldConf >= 75
+                          ? 'text-amber-700 bg-amber-50 border-amber-200'
+                          : 'text-rose-700 bg-rose-50 border-rose-200';
+                      return (
+                        <div
+                          key={key}
+                          className={`bg-white p-2.5 rounded-lg border border-slate-200/80 shadow-2xs ${
+                            key === 'residence_address' || key === 'origin_address' || key.startsWith('mrz_')
+                              ? 'sm:col-span-2 lg:col-span-3'
+                              : ''
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="block text-[10px] font-medium text-slate-400 uppercase tracking-wide">
+                              {FIELD_LABELS[key] || key.replace(/_/g, ' ')}
+                            </span>
+                            {fieldConf !== undefined && fieldConf !== null && (
+                              <span className={`px-1.5 py-0.5 rounded border text-[10px] font-mono font-semibold shrink-0 ${confClass}`}>
+                                {fieldConf.toFixed(1)}%
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-xs font-semibold text-slate-900 mt-0.5 block break-words font-mono">
+                            {typeof val === 'object' ? JSON.stringify(val) : String(val)}
+                          </span>
+                        </div>
+                      );
+                    })}
                 </div>
               )}
 
@@ -777,7 +803,8 @@ export const JobsPage: React.FC = () => {
     file_name: selectedJob.fileName,
     service: selectedJob.serviceName,
     document_type: selectedJob.docTypeId,
-    confidence_score: selectedJob.confidenceScore || 99.4,
+    confidence_score: selectedJob.confidenceScore ?? null,
+    field_confidences: selectedJob.fieldConfidences || selectedJob.segmentationInfo?.field_confidences || null,
     status: selectedJob.status,
     segmentation_info: selectedJob.segmentationInfo || null,
     extracted_data: selectedJob.extractedDataPreview || {},

@@ -165,6 +165,10 @@ export interface SegmentationInfo {
   pipeline_mode?: string;
   ocr_lines_count?: number;
   stage_timings_ms?: Record<string, number>;
+  ocr_confidence?: number | null;
+  llm_confidence?: number | null;
+  confidence_source?: string;
+  field_confidences?: Record<string, number>;
 }
 
 export interface OCRJob {
@@ -185,6 +189,7 @@ export interface OCRJob {
   processingDurationMs: number;
   status: JobStatus;
   confidenceScore?: number;
+  fieldConfidences?: Record<string, number>;
   errorReason?: string;
   extractedDataPreview?: Record<string, any>;
   originalImageUrl?: string;
