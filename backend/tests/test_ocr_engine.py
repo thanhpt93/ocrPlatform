@@ -1124,3 +1124,237 @@ def test_paddleocr_vl_strip_chunking_and_repetition_collapse_fallback():
 
     assert mock_call.call_count == 8  # 2 strip chunks + 6 recovered per-row calls
     assert [ln["text"] for ln in ocr_lines] == [f"LINE {i}" for i in range(1, 7)] + fallback_rows
+
+
+def test_passport_mrz_recovery_and_postprocess_fields(client, customer_one_token):
+    import numpy as np
+    from app.modules.ocr_engine.service import (
+        _clean_mrz_line1,
+        _clean_mrz_line2,
+        _extract_text_lines_paddleocr_vl,
+        _postprocess_hybrid_extracted_data,
+    )
+
+    # 1. ICAO MRZ line 1 & line 2 normalization (strips PaddleOCR-VL CJK '<' hallucinations & pads to 44)
+    assert (
+        _clean_mrz_line1("P<VNMVU<<THU<HA涓涓涓涓涓涓涓涓涓涓涓")
+        == "P<VNMVU<<THU<HA<<<<<<<<<<<<<<<<<<<<<<<<<<<<<"
+    )
+    assert (
+        _clean_mrz_line2("C4665287<8VNM8810182F2803124012612613<<<<04")
+        == "C4665287<8VNM8810182F2803124012612613<<<<<04"
+    )
+    assert (
+        _clean_mrz_line2("C01429561VNM8602020M250313621244039962")
+        == "C0142956<1VNM8602020M2503136212440399<<<<<62"
+    )
+
+    # 2. Post-processing splits 'P VNM C4665287', recovers place_of_birth, id_card_number, and 2 MRZ lines
+    passport_lines = [
+        {"bbox": [0, 0, 100, 18], "text": "Hộ CHIẾU / PASSPORT  Loại / Type  Mã số / Code  Số hộ chiếu / Passport N°", "confidence": 91.0, "token_count": 10},
+        {"bbox": [0, 20, 100, 38], "text": "P VNM C4665287", "confidence": 94.0, "token_count": 4},
+        {"bbox": [0, 40, 100, 58], "text": "VŨ THU HÀ", "confidence": 98.5, "token_count": 3},
+        {"bbox": [0, 60, 100, 78], "text": "Ngày sinh / Date of birth  Nơi sinh / Place of Birth", "confidence": 94.0, "token_count": 8},
+        {"bbox": [0, 80, 100, 98], "text": "18/10/1988  HÀ NỘI", "confidence": 95.2, "token_count": 4},
+        {"bbox": [0, 100, 100, 118], "text": "Giới tính / Sex  Số GCMND / ID card", "confidence": 83.0, "token_count": 6},
+        {"bbox": [0, 120, 100, 138], "text": "NỮ/F 012612613", "confidence": 94.4, "token_count": 4},
+        {"bbox": [0, 140, 100, 158], "text": "Cục Quản lý xuất nhập cảnh", "confidence": 99.8, "token_count": 6},
+        {"bbox": [0, 160, 100, 178], "text": "P<VNMVU<<THU<HA<<<<<<<<<<<<<<<<<<<<<<<<<<<<<", "confidence": 85.0, "token_count": 10},
+        {"bbox": [0, 180, 100, 198], "text": "C4665287<8VNM8810182F2803124012612613<<<<<04", "confidence": 96.4, "token_count": 14},
+    ]
+    cleaned = _postprocess_hybrid_extracted_data(
+        {
+            "document_type": "passport",
+            "passport_number": "P VNM C4665287",
+            "full_name": "VŨ THU HÀ",
+            "date_of_birth": "18/10/1988",
+            "gender": "Nữ",
+            "nationality": "VIỆT NAM",
+            "issue_date": "12/03/2018",
+            "expiry_date": "12/03/2028",
+            "issue_place": "Cục Quản lý xuất nhập cảnh",
+        },
+        passport_lines,
+    )
+    assert cleaned["passport_type"] == "P"
+    assert cleaned["country_code"] == "VNM"
+    assert cleaned["passport_number"] == "C4665287"
+    assert cleaned["place_of_birth"] == "Hà Nội"
+    assert cleaned["id_card_number"] == "012612613"
+    assert cleaned["mrz_line1"] == "P<VNMVU<<THU<HA<<<<<<<<<<<<<<<<<<<<<<<<<<<<<"
+    assert cleaned["mrz_line2"] == "C4665287<8VNM8810182F2803124012612613<<<<<04"
+
+    # 3. Recover missing MRZ line 2 via RapidOCR rec when PaddleOCR-VL strip drops it
+    buf = io.BytesIO()
+    Image.new("RGB", (750, 500), color=(240, 240, 240)).save(buf, format="PNG")
+    fake_bgr = np.full((500, 750, 3), 240, dtype=np.uint8)
+    fake_boxes = [
+        {"bbox": [50, 20 + i * 25, 680, 40 + i * 25], "crop_rgb": np.full((20, 630, 3), 230, dtype=np.uint8)}
+        for i in range(10)
+    ]
+    # Override bottom 2 rows into realistic bottom-wide MRZ geometry
+    fake_boxes[8]["bbox"] = [40, 395, 715, 430]
+    fake_boxes[9]["bbox"] = [40, 435, 715, 470]
+
+    chunk1 = "CỘNG HÒA\nHỘ CHIẾU / PASSPORT\nP VNM C4665287\nVŨ THU HÀ\n18/10/1988 HÀ NỘI"
+    chunk2 = "NỮ/F 012612613\n12/03/2018 12/03/2028\nCục Quản lý xuất nhập cảnh\nP<VNMVU<<THU<HA涓涓涓涓涓"
+    fake_rec = MagicMock(return_value=([["C4665287<8VNM8810182F2803124012612613<<<<04", 0.965]], None))
+
+    with patch("app.modules.ocr_engine.service._detect_text_boxes_bgr", return_value=(fake_bgr, fake_boxes, 20.0)), \
+         patch("app.modules.ocr_engine.service._call_paddleocr_vl_ollama", side_effect=[chunk1, chunk2]), \
+         patch("app.modules.ocr_engine.service._get_rapidocr_rec", return_value=fake_rec):
+        ocr_lines, _, _ = _extract_text_lines_paddleocr_vl(buf.getvalue())
+
+    assert ocr_lines[-2]["text"] == "P<VNMVU<<THU<HA<<<<<<<<<<<<<<<<<<<<<<<<<<<<<"
+    assert ocr_lines[-1]["text"] == "C4665287<8VNM8810182F2803124012612613<<<<<04"
+
+    # 4. End-to-end API test returns corrected passport_number, place_of_birth, and MRZ lines + field confidences
+    packages = client.get("/api/v1/packages/pkg-test-1").json()
+    version_id = packages["current_version"]["id"]
+    order_id = client.post(
+        "/api/v1/orders",
+        headers={"Authorization": f"Bearer {customer_one_token}"},
+        json={"package_version_id": version_id},
+    ).json()["id"]
+    license_id = client.post(
+        f"/api/v1/orders/{order_id}/checkout",
+        headers={"Authorization": f"Bearer {customer_one_token}"},
+        json={"payment_method": "mock_card"},
+    ).json()["license_id"]
+
+    sample_img = make_sample_id_with_background_bytes()
+    with patch("app.modules.ocr_engine.service._extract_text_lines_paddleocr_vl", return_value=(passport_lines, 120.0, 2100.0)), \
+         patch("urllib.request.urlopen") as mock_url:
+        mock_url.return_value.__enter__.return_value = mock_ollama_response({
+            "document_type": "passport",
+            "passport_number": "P VNM C4665287",
+            "full_name": "VŨ THU HÀ",
+            "date_of_birth": "18/10/1988",
+            "gender": "Nữ",
+            "nationality": "VIỆT NAM",
+            "issue_date": "12/03/2018",
+            "expiry_date": "12/03/2028",
+            "issue_place": "Cục Quản lý xuất nhập cảnh",
+        })
+        res = client.post(
+            "/api/v1/ocr/process-identity",
+            headers={"Authorization": f"Bearer {customer_one_token}"},
+            files={"file": ("005.jpg", io.BytesIO(sample_img), "image/jpeg")},
+            data={"license_id": license_id},
+        )
+
+    assert res.status_code == 200
+    body = res.json()
+    ex = body["extracted_data"]
+    assert ex["passport_number"] == "C4665287"
+    assert ex["passport_type"] == "P"
+    assert ex["country_code"] == "VNM"
+    assert ex["place_of_birth"] == "Hà Nội"
+    assert ex["id_card_number"] == "012612613"
+    assert ex["mrz_line1"] == "P<VNMVU<<THU<HA<<<<<<<<<<<<<<<<<<<<<<<<<<<<<"
+    assert ex["mrz_line2"] == "C4665287<8VNM8810182F2803124012612613<<<<<04"
+    assert "place_of_birth" in body["field_confidences"]
+    assert "mrz_line1" in body["field_confidences"]
+    assert "mrz_line2" in body["field_confidences"]
+
+
+def test_passport_stacked_row_grouping_name_guardrail_and_passport_type_confidence(client, customer_one_token):
+    import math
+    from app.modules.ocr_engine.service import (
+        _postprocess_hybrid_extracted_data,
+        _sort_ocr_lines_y_center,
+    )
+
+    # 1. Stacked boxes on compact passport (580x357) must NOT merge TRẦN ANH TUẤN with Quốc tịch / Nationality
+    compact_boxes = [
+        {"bbox": [199, 72, 329, 97], "text": "Họ và tên / Full name"},
+        {"bbox": [202, 87, 339, 115], "text": "TRẦN ANH TUẤN"},
+        {"bbox": [201, 104, 335, 130], "text": "Quốc tịch / Nationality"},
+        {"bbox": [373, 101, 542, 127], "text": "VIỆT NAM / VIETNAMESE"},
+        {"bbox": [202, 139, 301, 164], "text": "24 / 10 / 1980"},
+        {"bbox": [371, 137, 514, 163], "text": "TUYÊN QUANG"},
+        {"bbox": [200, 154, 288, 179], "text": "Giới tính / Sex"},
+        {"bbox": [370, 151, 520, 177], "text": "Số GCMND / ID card N°"},
+    ]
+    grouped = _sort_ocr_lines_y_center(compact_boxes, img_width=580, img_height=357)
+    row_texts = [[it["text"] for it in r] for r in grouped]
+    assert row_texts == [
+        ["Họ và tên / Full name"],
+        ["TRẦN ANH TUẤN"],
+        ["Quốc tịch / Nationality", "VIỆT NAM / VIETNAMESE"],
+        ["24 / 10 / 1980", "TUYÊN QUANG"],
+        ["Giới tính / Sex", "Số GCMND / ID card N°"],
+    ]
+
+    # 2. MRZ Line 1 guardrail rejects hallucinated prefix words ('QUAN QUANG TRAN ANH TUAN')
+    pp_lines = [
+        {"bbox": [0, 0, 100, 18], "text": "P  VNM  C1869977", "confidence": 95.0, "token_count": 4,
+         "tokens": [("P", 60.0), ("  ", 95.0), ("VNM", 99.0), ("  C1869977", 99.5)]},
+        {"bbox": [0, 20, 100, 38], "text": "TRẦN ANH TUẤN", "confidence": 96.0, "token_count": 3,
+         "tokens": [("TRẦN", 94.0), (" ANH", 98.0), (" TUẤN", 97.0)]},
+        {"bbox": [0, 40, 100, 58], "text": "24/10/1980  TUYÊN QUANG", "confidence": 95.0, "token_count": 4},
+        {"bbox": [0, 50, 100, 59], "text": "Ngày cấp / Date of issue  Có giá trị đến / Date of expiry", "confidence": 95.0, "token_count": 8},
+        {"bbox": [0, 60, 100, 69], "text": "15/06/2016 15/06/2026", "confidence": 98.0, "token_count": 6},
+        {"bbox": [0, 60, 100, 78], "text": "P<VNMTRAN<<ANH<TUAN<<<<<<<<<<<<<<<<<<<<<<<<<", "confidence": 85.0, "token_count": 10,
+         "tokens": [("P<VNM", 94.0), ("TRAN<<ANH<TUAN<<<", 82.0)]},
+        {"bbox": [0, 80, 100, 98], "text": "C1869977<3VNM8010247M2606152073336499<<<<<48", "confidence": 99.0, "token_count": 14},
+    ]
+    cleaned = _postprocess_hybrid_extracted_data(
+        {"document_type": "passport", "full_name": "QUAN QUANG TRAN ANH TUAN", "passport_number": "C1869977"},
+        pp_lines,
+    )
+    assert cleaned["full_name"] == "TRẦN ANH TUẤN"
+    assert cleaned["passport_type"] == "P"
+    assert cleaned["date_of_birth"] == "24/10/1980"
+    assert cleaned["issue_date"] == "15/06/2016"
+    assert cleaned["expiry_date"] == "15/06/2026"
+
+    # 3. API confidence corroborates passport_type via 'P VNM'/'P<VNM' and ignores stale hallucinated LLM full_name logprob
+    packages = client.get("/api/v1/packages/pkg-test-1").json()
+    version_id = packages["current_version"]["id"]
+    order_id = client.post(
+        "/api/v1/orders",
+        headers={"Authorization": f"Bearer {customer_one_token}"},
+        json={"package_version_id": version_id},
+    ).json()["id"]
+    license_id = client.post(
+        f"/api/v1/orders/{order_id}/checkout",
+        headers={"Authorization": f"Bearer {customer_one_token}"},
+        json={"payment_method": "mock_card"},
+    ).json()["license_id"]
+
+    llm_tokens = [
+        ('{"document_type": "', math.log(1.0)),
+        ("passport", math.log(0.99)),
+        ('", "passport_type": "', math.log(1.0)),
+        ("P", math.log(0.98)),
+        ('", "country_code": "', math.log(1.0)),
+        ("VNM", math.log(0.99)),
+        ('", "passport_number": "', math.log(1.0)),
+        ("C1869977", math.log(0.99)),
+        ('", "full_name": "', math.log(1.0)),
+        ("QUAN QUANG TRAN ANH TUAN", math.log(0.50)),
+        ('"}', math.log(1.0)),
+    ]
+    llm_resp = MagicMock()
+    llm_resp.status = 200
+    llm_resp.read.return_value = json.dumps({
+        "message": {"role": "assistant", "content": "".join(t for t, _ in llm_tokens)},
+        "logprobs": [{"token": t, "logprob": lp} for t, lp in llm_tokens],
+    }).encode("utf-8")
+
+    sample_img = make_sample_id_with_background_bytes()
+    with patch("app.modules.ocr_engine.service._extract_text_lines_paddleocr_vl", return_value=(pp_lines, 80.0, 900.0)), \
+         patch("urllib.request.urlopen") as mock_url:
+        mock_url.return_value.__enter__.return_value = llm_resp
+        res = client.post(
+            "/api/v1/ocr/process-identity",
+            headers={"Authorization": f"Bearer {customer_one_token}"},
+            files={"file": ("003.jpg", io.BytesIO(sample_img), "image/jpeg")},
+            data={"license_id": license_id},
+        )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["extracted_data"]["full_name"] == "TRẦN ANH TUẤN"
+    assert body["field_confidences"]["passport_type"] >= 90.0
+    assert body["field_confidences"]["full_name"] >= 95.0
