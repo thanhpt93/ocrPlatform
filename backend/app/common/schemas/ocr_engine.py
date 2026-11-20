@@ -4,16 +4,25 @@ from pydantic import BaseModel, Field
 class IDCardData(BaseModel):
     document_type: str = "id_card"
     card_subtype: Optional[str] = Field(None, description="CCCD gắn chip, Căn cước 2024, hoặc CMND")
+    card_side: Optional[str] = Field(None, description="Mặt thẻ: front hoặc back")
     id_number: Optional[str] = Field(None, description="Số định danh cá nhân / Số CCCD / CMND")
     full_name: Optional[str] = Field(None, description="Họ và tên")
     date_of_birth: Optional[str] = Field(None, description="Ngày sinh (DD/MM/YYYY)")
     gender: Optional[str] = Field(None, description="Giới tính (Nam/Nữ)")
     nationality: Optional[str] = Field(None, description="Quốc tịch")
-    origin_address: Optional[str] = Field(None, description="Quê quán")
+    origin_address: Optional[str] = Field(None, description="Quê quán / Nguyên quán")
     residence_address: Optional[str] = Field(None, description="Nơi thường trú / Nơi cư trú")
+    place_of_birth: Optional[str] = Field(None, description="Nơi đăng ký khai sinh (Căn cước 2024 mặt sau)")
+    personal_identification: Optional[str] = Field(None, description="Đặc điểm nhân dạng / Dấu vết riêng và dị hình")
+    ethnic: Optional[str] = Field(None, description="Dân tộc (CMND mặt sau)")
+    religion: Optional[str] = Field(None, description="Tôn giáo (CMND mặt sau)")
     issue_date: Optional[str] = Field(None, description="Ngày cấp")
     expiry_date: Optional[str] = Field(None, description="Có giá trị đến / Ngày hết hạn")
-    issue_place: Optional[str] = Field(None, description="Nơi cấp")
+    issue_place: Optional[str] = Field(None, description="Nơi cấp / Cơ quan cấp")
+    signer_name: Optional[str] = Field(None, description="Tên người ký (CCCD gắn chip mặt sau)")
+    mrz_line1: Optional[str] = Field(None, description="Dòng MRZ 1 (TD1 - mặt sau)")
+    mrz_line2: Optional[str] = Field(None, description="Dòng MRZ 2 (TD1 - mặt sau)")
+    mrz_line3: Optional[str] = Field(None, description="Dòng MRZ 3 (TD1 - mặt sau)")
 
 class PassportData(BaseModel):
     document_type: str = "passport"

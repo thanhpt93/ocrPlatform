@@ -985,6 +985,160 @@ def _parse_mrz_fields(mrz1: Optional[str], mrz2: Optional[str]) -> Dict[str, Any
     return out
 
 
+def _clean_td1_mrz_line1(raw: str) -> Optional[str]:
+    """Normalize ICAO 9303 TD1 MRZ line 1 (30 chars, e.g., 'IDVNM1620001532084162000153<<0')."""
+    if not raw or not isinstance(raw, str):
+        return None
+    compact = re.sub(r"\s+", "", raw.strip().upper())
+    m_start = re.search(r"(?<![A-Z])I[D<][A-Z]{3}[A-Z0-9<]{10,}", compact)
+    if not m_start:
+        return None
+    cand = re.match(r"^[A-Z0-9<]+", m_start.group(0))
+    if not cand:
+        return None
+    s = cand.group(0)
+    if len(s) < 15:
+        return None
+    # Reject English prose like "IDENTIFICATIONNUMBER..." where doc-number region has too few digits
+    if sum(1 for ch in s[5:28] if ch.isdigit()) < 5:
+        return None
+    prefix = s[:5]
+    body = list(s[5:30])
+    # Repair common O/I OCR confusions in numeric doc9+chk (pos 5..14) and 12-digit VN ID slot (pos 15..27)
+    for idx in range(min(len(body), 10)):
+        if body[idx] == "O":
+            body[idx] = "0"
+        elif body[idx] == "I":
+            body[idx] = "1"
+    if len(body) >= 22 and sum(1 for ch in body[10:22] if ch.isdigit() or ch in ("O", "I")) >= 10:
+        for idx in range(10, min(len(body), 22)):
+            if body[idx] == "O":
+                body[idx] = "0"
+            elif body[idx] == "I":
+                body[idx] = "1"
+    if len(body) >= 25 and body[24] in ("O", "I"):
+        body[24] = "0" if body[24] == "O" else "1"
+    # Re-insert '<<' before trailing check digit if PaddleOCR-VL dropped trailing filler '<'
+    rebuilt = prefix + "".join(body)
+    if len(rebuilt) == 28 and rebuilt[15:27].isdigit() and rebuilt[27].isdigit():
+        rebuilt = rebuilt[:27] + "<<" + rebuilt[27]
+    elif len(rebuilt) == 29 and rebuilt[15:27].isdigit() and rebuilt[27] == "<" and rebuilt[28].isdigit():
+        rebuilt = rebuilt[:27] + "<<" + rebuilt[28]
+    return rebuilt.ljust(30, "<")[:30]
+
+
+def _clean_td1_mrz_line2(raw: str) -> Optional[str]:
+    """Normalize ICAO 9303 TD1 MRZ line 2 (30 chars, e.g., '6201016F9912315VNM<<<<<<<<<<<8')."""
+    if not raw or not isinstance(raw, str):
+        return None
+    compact = re.sub(r"\s+", "", raw.strip().upper())
+    m_prefix = re.match(r"^[A-Z0-9<]+", compact)
+    if not m_prefix:
+        return None
+    cand = m_prefix.group(0)
+    m_td1 = re.match(
+        r"^([0-9OI]{6})([0-9O])([MF<])([0-9OI]{6})([0-9O])([A-Z]{3})([A-Z0-9<]*)$",
+        cand,
+    )
+    if not m_td1:
+        return None
+    dob, chk1, sex, exp, chk2, nat, tail = m_td1.groups()
+    fix_num = lambda s: s.replace("O", "0").replace("I", "1")
+    dob = fix_num(dob)
+    chk1 = fix_num(chk1)
+    exp = fix_num(exp)
+    chk2 = fix_num(chk2)
+    if tail and tail[-1] in ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "O", "I"):
+        comp_chk = fix_num(tail[-1])
+        tail_body = tail[:-1]
+        if len(tail_body) <= 11:
+            tail = tail_body.ljust(11, "<") + comp_chk
+        else:
+            tail = tail_body[:11] + comp_chk
+    else:
+        tail = tail.ljust(12, "<")[:12]
+    return f"{dob}{chk1}{sex}{exp}{chk2}{nat}{tail}"[:30]
+
+
+def _clean_td1_mrz_line3(raw: str) -> Optional[str]:
+    """Normalize ICAO 9303 TD1 MRZ line 3 (30 chars, e.g., 'THACH<<THI<AM<<<<<<<<<<<<<<<<<')."""
+    if not raw or not isinstance(raw, str):
+        return None
+    compact = re.sub(r"\s+", "", raw.strip().upper())
+    m_valid = re.match(r"^[A-Z<]+", compact)
+    if not m_valid:
+        return None
+    core = m_valid.group(0).rstrip("<")
+    if "<<" not in core or len(core) < 4:
+        return None
+    if re.match(r"^(?:I[D<]|P<)[A-Z]{3}", core):
+        return None
+    return core.ljust(30, "<")[:30]
+
+
+def _parse_td1_mrz_fields(
+    mrz1: Optional[str],
+    mrz2: Optional[str],
+    mrz3: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Extract check-digit-validated identity fields from ICAO 9303 TD1 3-line MRZ
+    used on Vietnamese CCCD gắn chip and Căn cước 2024 back sides.
+    Returns any validated subset of: id_number, date_of_birth, gender, expiry_date, nationality.
+    """
+    out: Dict[str, Any] = {}
+    if mrz1:
+        m1 = re.match(r"^I[D<]([A-Z]{3})([A-Z0-9<]{9})([0-9])([A-Z0-9<]{0,15})$", mrz1)
+        if m1:
+            _country, doc9, chk1, opt1 = m1.groups()
+            chk1_ok = _mrz_check_digit(doc9) == chk1
+            id12 = opt1[:12] if len(opt1) >= 12 and opt1[:12].isdigit() else None
+            opt_chk_ok = bool(
+                id12
+                and len(opt1) >= 15
+                and opt1[14].isdigit()
+                and _mrz_check_digit(id12) == opt1[14]
+            )
+            suffix_ok = bool(id12 and doc9.isdigit() and id12.endswith(doc9))
+            if id12 and (opt_chk_ok or chk1_ok or suffix_ok):
+                out["id_number"] = id12
+            elif chk1_ok:
+                doc_clean = doc9.replace("<", "").strip()
+                if doc_clean and doc_clean.isdigit():
+                    out["id_number"] = doc_clean
+
+    if mrz2:
+        m2 = re.match(
+            r"^(\d{6})(\d)([MF<])(\d{6})(\d)([A-Z]{3})([A-Z0-9<]{0,11})([0-9<])?$",
+            mrz2,
+        )
+        if m2:
+            dob, chk_dob, sex, exp, chk_exp, nat_code, _opt2, _comp_chk = m2.groups()
+            if _mrz_check_digit(dob) == chk_dob:
+                yy, mm, dd = int(dob[0:2]), int(dob[2:4]), int(dob[4:6])
+                if 1 <= mm <= 12 and 1 <= dd <= 31:
+                    cur_yy = utc_now().year % 100
+                    yyyy = (1900 + yy) if yy > cur_yy else (2000 + yy)
+                    out["date_of_birth"] = f"{dd:02d}/{mm:02d}/{yyyy}"
+            if sex == "M":
+                out["gender"] = "Nam"
+            elif sex == "F":
+                out["gender"] = "Nữ"
+            if _mrz_check_digit(exp) == chk_exp:
+                if exp == "991231":
+                    out["expiry_date"] = "Không thời hạn"
+                else:
+                    yy, mm, dd = int(exp[0:2]), int(exp[2:4]), int(exp[4:6])
+                    if 1 <= mm <= 12 and 1 <= dd <= 31:
+                        out["expiry_date"] = f"{dd:02d}/{mm:02d}/{2000 + yy}"
+            if nat_code == "VNM":
+                out["nationality"] = "Việt Nam"
+            elif nat_code:
+                out["nationality"] = nat_code
+
+    return out
+
+
 def _group_ocr_rows_y_center(lines: List[Dict[str, Any]], row_tolerance_px: float = 14.0) -> List[List[Dict[str, Any]]]:
     """Group OCR boxes into horizontal visual rows by y-center and sort left-to-right."""
     if not lines:
@@ -1748,6 +1902,54 @@ def _recognize_mrz_line2_row(
     return None, None, 0, None
 
 
+def _recognize_td1_mrz_row(
+    row: List[Dict[str, Any]],
+    line_num: int,
+    paddle_model: str,
+    min_row_height: int,
+) -> Tuple[Optional[str], Optional[float], int, Optional[List[Tuple[str, float]]]]:
+    """
+    Recognize one TD1 MRZ line (1, 2, or 3; 30 chars) via RapidOCR TextRec first,
+    falling back to single-row PaddleOCR-VL (repeat_penalty=1.0).
+    """
+    cleaner = (
+        _clean_td1_mrz_line1
+        if line_num == 1
+        else (_clean_td1_mrz_line2 if line_num == 2 else _clean_td1_mrz_line3)
+    )
+    rec = _get_rapidocr_rec()
+    if rec is not None:
+        try:
+            canvas = _build_paddleocr_vl_row_canvas(row, min_row_height=48, force_enhance=False)
+            res, _ = rec(canvas[:, :, ::-1])
+            if res and isinstance(res, list) and len(res[0]) >= 2:
+                raw_txt = str(res[0][0] or "").strip()
+                score_pct = round(min(1.0, max(0.0, float(res[0][1]))) * 100.0, 2)
+                cleaned = cleaner(raw_txt)
+                if cleaned and len(cleaned) == 30:
+                    tok_cnt = max(1, len(cleaned) // 3)
+                    return cleaned, score_pct, tok_cnt, [(cleaned, score_pct)]
+        except Exception as exc:
+            logger.debug("RapidOCR TD1 MRZ line %s recognition error: %s", line_num, exc)
+
+    try:
+        p_txt, p_conf, p_cnt, p_toks = _ocr_single_row_paddleocr_vl(
+            row,
+            paddle_model,
+            min_row_height=max(64, min_row_height),
+            num_predict=96,
+            repeat_penalty=1.0,
+        )
+        cleaned = cleaner(p_txt)
+        if cleaned:
+            return cleaned, p_conf, p_cnt, p_toks
+        if p_txt:
+            return p_txt, p_conf, p_cnt, p_toks
+    except Exception as exc:
+        logger.debug("PaddleOCR-VL TD1 MRZ line %s fallback error: %s", line_num, exc)
+    return None, None, 0, None
+
+
 def _extract_text_lines_paddleocr_vl(
     image_bytes: bytes,
     paddle_model: Optional[str] = None,
@@ -1901,11 +2103,94 @@ def _extract_text_lines_paddleocr_vl(
     # turn trailing '<<<' into CJK chars and drop MRZ line 2 completely. Recover & normalize
     # both MRZ lines cleanly when passport/MRZ cues + bottom 2 wide rows are present.
     mrz_protected_indices = set()
-    if rows and len(rows) >= 8 and parsed_lines:
+    is_id_td1_back = False
+    if rows and len(rows) >= 5 and parsed_lines:
+        joined_low = "\n".join(parsed_lines).lower()
+        has_id_back_cue = any(
+            cue in joined_low
+            for cue in (
+                "idvnm",
+                "đặc điểm nhân dạng",
+                "dac diem nhan dang",
+                "nơi đăng ký khai sinh",
+                "noi dang ky khai sinh",
+                "bộ công an",
+                "cục trưởng",
+                "ngón trỏ",
+            )
+        ) or any(_clean_td1_mrz_line1(ln) is not None for ln in parsed_lines)
+        has_explicit_passport = any(
+            cue in joined_low
+            for cue in ("passport", "hộ chiếu", "hồ chiêu", "hộ chiêu", "xuất nhập cảnh", "p<")
+        )
+
+        if has_id_back_cue and not has_explicit_passport and len(rows) >= 6:
+            r_t1, r_t2, r_t3 = rows[-3], rows[-2], rows[-1]
+            t_bounds = [
+                (
+                    min(it["bbox"][0] for it in r),
+                    min(it["bbox"][1] for it in r),
+                    max(it["bbox"][2] for it in r),
+                    max(it["bbox"][3] for it in r),
+                )
+                for r in (r_t1, r_t2, r_t3)
+            ]
+            ycs = [((b[1] + b[3]) / 2.0) for b in t_bounds]
+            widths = [(b[2] - b[0]) for b in t_bounds]
+            is_bottom_td1_trio = (
+                ycs[0] >= 0.50 * h
+                and ycs[0] < ycs[1] < ycs[2]
+                and (ycs[2] - ycs[0]) <= 0.35 * h
+                and all(wd >= 0.45 * w for wd in widths)
+            )
+            if is_bottom_td1_trio:
+                is_id_td1_back = True
+                td1_indices: Dict[int, Optional[int]] = {1: None, 2: None, 3: None}
+                for idx in range(max(0, len(parsed_lines) - 5), len(parsed_lines)):
+                    ln = parsed_lines[idx]
+                    if td1_indices[1] is None and (_clean_td1_mrz_line1(ln) or re.match(r"^\s*I[D<][A-Z]{3}", ln.upper())):
+                        td1_indices[1] = idx
+                    elif td1_indices[2] is None and _clean_td1_mrz_line2(ln):
+                        td1_indices[2] = idx
+                    elif td1_indices[3] is None and (_clean_td1_mrz_line3(ln) or ("<<" in ln and not ln.upper().startswith("ID"))):
+                        td1_indices[3] = idx
+
+                cleaners = {1: _clean_td1_mrz_line1, 2: _clean_td1_mrz_line2, 3: _clean_td1_mrz_line3}
+                td1_rows = {1: r_t1, 2: r_t2, 3: r_t3}
+                for line_num in (1, 2, 3):
+                    t_idx = td1_indices[line_num]
+                    existing_clean = cleaners[line_num](parsed_lines[t_idx]) if t_idx is not None else None
+                    if existing_clean and len(existing_clean) == 30 and t_idx is not None:
+                        parsed_lines[t_idx] = existing_clean
+                        mrz_protected_indices.add(t_idx)
+                    else:
+                        m_norm, m_conf, m_cnt, m_toks = _recognize_td1_mrz_row(
+                            td1_rows[line_num], line_num, effective_paddle_model, min_row_h
+                        )
+                        if m_norm:
+                            if t_idx is not None:
+                                parsed_lines[t_idx] = m_norm
+                                line_confs[t_idx] = m_conf
+                                line_tok_counts[t_idx] = m_cnt
+                                line_tokens[t_idx] = m_toks
+                                mrz_protected_indices.add(t_idx)
+                            else:
+                                parsed_lines.append(m_norm)
+                                line_confs.append(m_conf)
+                                line_tok_counts.append(m_cnt)
+                                line_tokens.append(m_toks)
+                                line_source_rows.append(td1_rows[line_num])
+                                mrz_protected_indices.add(len(parsed_lines) - 1)
+
+    if rows and len(rows) >= 8 and parsed_lines and not is_id_td1_back:
         joined_low = "\n".join(parsed_lines).lower()
         has_passport_or_mrz_cue = any(
             cue in joined_low
             for cue in ("passport", "hộ chiếu", "hồ chiêu", "hộ chiêu", "xuất nhập cảnh", "p<", "<<")
+        )
+        has_id_cue = any(
+            cue in joined_low
+            for cue in ("căn cước", "chứng minh", "đặc điểm nhân dạng", "nơi đăng ký khai sinh", "idvnm")
         )
         r_mrz1, r_mrz2 = rows[-2], rows[-1]
         x1_1 = min(it["bbox"][0] for it in r_mrz1)
@@ -1925,7 +2210,7 @@ def _extract_text_lines_paddleocr_vl(
             and (x2_1 - x1_1) >= 0.40 * w
             and (x2_2 - x1_2) >= 0.40 * w
         )
-        if has_passport_or_mrz_cue and is_bottom_wide_pair:
+        if has_passport_or_mrz_cue and not has_id_cue and is_bottom_wide_pair:
             mrz1_idx: Optional[int] = None
             mrz2_idx: Optional[int] = None
             for idx in range(max(0, len(parsed_lines) - 3), len(parsed_lines)):
@@ -2380,6 +2665,484 @@ def _postprocess_passport_extracted_data(data: Dict[str, Any], lines: List[Dict[
     return result
 
 
+_ID_CARD_PLAN_B_KEYS: Dict[Tuple[str, str], Tuple[str, ...]] = {
+    ("CCCD gắn chip", "front"): (
+        "document_type",
+        "card_subtype",
+        "card_side",
+        "id_number",
+        "full_name",
+        "date_of_birth",
+        "gender",
+        "nationality",
+        "origin_address",
+        "residence_address",
+        "expiry_date",
+    ),
+    ("Căn cước 2024", "front"): (
+        "document_type",
+        "card_subtype",
+        "card_side",
+        "id_number",
+        "full_name",
+        "date_of_birth",
+        "gender",
+        "nationality",
+    ),
+    ("CMND", "front"): (
+        "document_type",
+        "card_subtype",
+        "card_side",
+        "id_number",
+        "full_name",
+        "date_of_birth",
+        "origin_address",
+        "residence_address",
+    ),
+    ("CCCD gắn chip", "back"): (
+        "document_type",
+        "card_subtype",
+        "card_side",
+        "personal_identification",
+        "issue_date",
+        "issue_place",
+        "signer_name",
+        "mrz_line1",
+        "mrz_line2",
+        "mrz_line3",
+    ),
+    ("Căn cước 2024", "back"): (
+        "document_type",
+        "card_subtype",
+        "card_side",
+        "residence_address",
+        "place_of_birth",
+        "issue_date",
+        "expiry_date",
+        "issue_place",
+        "mrz_line1",
+        "mrz_line2",
+        "mrz_line3",
+    ),
+    ("CMND", "back"): (
+        "document_type",
+        "card_subtype",
+        "card_side",
+        "ethnic",
+        "religion",
+        "personal_identification",
+        "issue_date",
+        "issue_place",
+    ),
+}
+
+_MRZ_FALLBACK_FIELDS: Tuple[str, ...] = (
+    "id_number",
+    "date_of_birth",
+    "gender",
+    "expiry_date",
+    "nationality",
+)
+_MRZ_SCORE_THRESHOLD = 85.0
+
+
+def _detect_id_card_side_and_subtype(
+    data: Dict[str, Any],
+    raw_texts: List[str],
+    low_text: str,
+) -> Tuple[str, str]:
+    """Determine ('front'|'back', 'CCCD gắn chip'|'Căn cước 2024'|'CMND') deterministically."""
+    has_td1_mrz = any(_clean_td1_mrz_line1(ln) or _clean_td1_mrz_line2(ln) for ln in raw_texts) or bool(
+        re.search(r"\bidvnm", low_text)
+    )
+    ascii_low = _strip_accents_lower("\n".join(raw_texts))
+    has_front_cues = any(
+        cue in ascii_low
+        for cue in (
+            "so dinh danh ca nhan",
+            "ho, chu dem",
+            "ho va ten",
+            "full name",
+            "que quan",
+            "place of origin",
+            "nguyen quan",
+            "noi thuong tru",
+            "noi dkhk",
+            "cong hoa xa hoi",
+            "socialist republic",
+            "ngay, thang, nam sinh",
+            "ngay sinh",
+            "sinh ngay",
+            "date of birth",
+            "co gia tri den",
+            "gioi tinh",
+            "quoc tich",
+            "nationality",
+            "can cuoc cong dan",
+            "chung minh nhan dan",
+            "giay chung minh",
+        )
+    )
+    has_strong_back_cues = (
+        has_td1_mrz
+        or bool(re.search(r"\bpersonal\s+identification\b(?!\s*number)", low_text))
+        or any(
+            cue in ascii_low
+            for cue in (
+                "dac diem nhan dang",
+                "dau vet rieng",
+                "noi dang ky khai sinh",
+                "ton giao",
+                "ngon tro trai",
+                "ngon tro phai",
+                "bo cong an",
+                "ministry of public security",
+                "cuc truong cuc canh sat",
+                "giam doc ca",
+                "giam doc cong an",
+                "ngay, thang, nam cap",
+                "ngay, thang, nam het han",
+            )
+        )
+    )
+    has_back_cues = has_strong_back_cues or ("dan toc" in ascii_low and not has_front_cues)
+
+    llm_side = str(data.get("card_side") or "").strip().lower()
+    if has_back_cues and not has_front_cues:
+        card_side = "back"
+    elif has_front_cues and not has_back_cues:
+        card_side = "front"
+    elif has_td1_mrz or any(
+        cue in ascii_low
+        for cue in (
+            "dac diem nhan dang",
+            "dau vet rieng",
+            "noi dang ky khai sinh",
+            "ngon tro trai",
+            "ngon tro phai",
+            "bo cong an",
+            "cuc truong cuc canh sat",
+        )
+    ):
+        card_side = "back"
+    elif llm_side in ("front", "back"):
+        card_side = llm_side
+    elif has_front_cues:
+        card_side = "front"
+    elif has_back_cues:
+        card_side = "back"
+    else:
+        card_side = "front"
+
+    raw_subtype = str(data.get("card_subtype") or "").strip()
+    low_sub = raw_subtype.lower()
+    if card_side == "front":
+        if (
+            "ho, chu dem" in ascii_low
+            or "so dinh danh ca nhan" in ascii_low
+            or ("can cuoc" in ascii_low and "cong dan" not in ascii_low and "que quan" not in ascii_low and "chung minh" not in ascii_low)
+        ):
+            card_subtype = "Căn cước 2024"
+        elif any(cue in ascii_low for cue in ("chung minh nhan dan", "giay chung minh", "nguyen quan", "noi dkhk")):
+            card_subtype = "CMND"
+        elif "can cuoc cong dan" in ascii_low or "citizen identity card" in ascii_low:
+            card_subtype = "CCCD gắn chip"
+        elif "2024" in low_sub:
+            card_subtype = "Căn cước 2024"
+        elif "cmnd" in low_sub:
+            card_subtype = "CMND"
+        else:
+            card_subtype = "CCCD gắn chip"
+    else:
+        if (
+            "noi dang ky khai sinh" in ascii_low
+            or "bo cong an" in ascii_low
+            or "ministry of public security" in ascii_low
+            or ("noi cu tru" in ascii_low and "dac diem nhan dang" not in ascii_low)
+        ):
+            card_subtype = "Căn cước 2024"
+        elif any(cue in ascii_low for cue in ("dan toc", "ton giao", "dau vet rieng")) or (
+            "giam doc" in ascii_low and "cuc truong" not in ascii_low and not has_td1_mrz
+        ):
+            card_subtype = "CMND"
+        elif "cuc truong" in ascii_low or "dac diem nhan dang" in ascii_low or has_td1_mrz:
+            card_subtype = "CCCD gắn chip"
+        elif "2024" in low_sub:
+            card_subtype = "Căn cước 2024"
+        elif "cmnd" in low_sub:
+            card_subtype = "CMND"
+        else:
+            card_subtype = "CCCD gắn chip"
+
+    return card_side, card_subtype
+
+
+def _filter_id_card_fields_plan_b(
+    data: Dict[str, Any],
+    mrz_decoded_keys: Optional[set] = None,
+) -> Dict[str, Any]:
+    """
+    Plan B response shaping: keep ONLY keys belonging to (card_subtype, card_side),
+    plus any MRZ-decoded fallback fields (id_number, date_of_birth, gender, expiry_date, nationality)
+    populated on back-side cards, and optional non-null signer_name on CMND back.
+    """
+    card_subtype = str(data.get("card_subtype") or "CCCD gắn chip")
+    card_side = str(data.get("card_side") or "front")
+    allowed = list(_ID_CARD_PLAN_B_KEYS.get((card_subtype, card_side), _ID_CARD_PLAN_B_KEYS[("CCCD gắn chip", "front")]))
+
+    if card_side == "back":
+        extra_mrz = mrz_decoded_keys or set()
+        for k in _MRZ_FALLBACK_FIELDS:
+            if k not in allowed and (k in extra_mrz or data.get(k) not in (None, "")):
+                allowed.append(k)
+        if card_subtype == "CMND" and data.get("signer_name") not in (None, "") and "signer_name" not in allowed:
+            allowed.append("signer_name")
+
+    filtered: Dict[str, Any] = {}
+    for key in allowed:
+        if key in ("document_type", "card_subtype", "card_side"):
+            filtered[key] = data.get(key)
+        else:
+            filtered[key] = data.get(key)
+    return filtered
+
+
+def _postprocess_id_card_extracted_data(data: Dict[str, Any], lines: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Post-process and apply Plan B side/subtype rules for CCCD / Căn cước 2024 / CMND."""
+    raw_texts = [str(it.get("text") or "").strip() for it in lines if isinstance(it, dict) and it.get("text")]
+    full_text = "\n".join(raw_texts)
+    low_text = full_text.lower()
+    ascii_low = _strip_accents_lower(full_text)
+
+    card_side, card_subtype = _detect_id_card_side_and_subtype(data, raw_texts, low_text)
+    data["document_type"] = "id_card"
+    data["card_side"] = card_side
+    data["card_subtype"] = card_subtype
+
+    # Convert ISO YYYY-MM-DD dates back to DD/MM/YYYY if matching OCR text
+    for date_field in ("date_of_birth", "expiry_date", "issue_date"):
+        val = data.get(date_field)
+        if isinstance(val, str):
+            val_s = val.strip()
+            iso_m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", val_s)
+            if iso_m:
+                dmy = f"{iso_m.group(3)}/{iso_m.group(2)}/{iso_m.group(1)}"
+                dmy_dash = f"{iso_m.group(3)}-{iso_m.group(2)}-{iso_m.group(1)}"
+                if dmy in full_text:
+                    data[date_field] = dmy
+                elif dmy_dash in full_text:
+                    data[date_field] = dmy_dash
+                elif card_side == "back":
+                    data[date_field] = dmy
+
+    if card_side == "front":
+        if (
+            "khong thoi" in ascii_low
+            or "vo thoi han" in ascii_low
+            or "ong thoi han" in ascii_low
+        ) and (not data.get("expiry_date") or not re.search(r"\d{2}/\d{2}/\d{4}", full_text)):
+            data["expiry_date"] = "Không thời hạn"
+
+        nat = data.get("nationality")
+        if isinstance(nat, str) and nat.strip().lower() == "kinh" and "dan toc" in ascii_low:
+            data["nationality"] = "Việt Nam" if "viet nam" in ascii_low else None
+
+    else:
+        # Back-side guardrails (allow Bộ Công An, Cục trưởng Cục Cảnh sát, Ngày tháng năm...)
+        has_issue_place_cue = any(
+            cue in ascii_low
+            for cue in (
+                "noi cap",
+                "cuc canh sat",
+                "cuc truong",
+                "bo cong an",
+                "ministry of public security",
+                "giam doc",
+                "cong an tinh",
+                "cong an tp",
+                "police department",
+            )
+        )
+        if not has_issue_place_cue:
+            data["issue_place"] = None
+        elif isinstance(data.get("issue_place"), str):
+            ip_clean = re.sub(
+                r"\s*/\s*ministry\s+of\s+public\s+security\b",
+                "",
+                data["issue_place"].strip(),
+                flags=re.IGNORECASE,
+            ).strip()
+            data["issue_place"] = ip_clean or None
+        if "bo cong an" in ascii_low or "ministry of public security" in ascii_low:
+            if not data.get("issue_place") or card_subtype == "Căn cước 2024":
+                data["issue_place"] = "BỘ CÔNG AN"
+        elif "cuc truong cuc canh sat" in ascii_low:
+            cur_ip_ascii = _strip_accents_lower(str(data.get("issue_place") or ""))
+            if not cur_ip_ascii or ("cuc truong" in cur_ip_ascii and "canh sat" in cur_ip_ascii):
+                data["issue_place"] = "CỤC TRƯỞNG CỤC CẢNH SÁT QUẢN LÝ HÀNH CHÍNH VỀ TRẬT TỰ XÃ HỘI"
+
+        has_issue_date_cue = any(
+            cue in ascii_low
+            for cue in (
+                "ngay cap",
+                "ngay, thang, nam cap",
+                "date of issue",
+                "date, month, year",
+            )
+        ) or bool(re.search(r"ngay,?\s*thang,?\s*nam(?!\s*(?:sinh|het))", ascii_low))
+        if not has_issue_date_cue:
+            data["issue_date"] = None
+
+        if ("khong thoi" in ascii_low or "vo thoi han" in ascii_low) and not data.get("expiry_date"):
+            data["expiry_date"] = "Không thời hạn"
+
+        # Clean back-side descriptive & label-prefixed fields
+        pi = data.get("personal_identification")
+        if isinstance(pi, str):
+            pi_clean = re.sub(
+                r"^(?:đặc\s*điểm\s*nh[ậâa]n\s*dạng|dấu\s*vết\s*riêng(?:\s*và\s*dị\s*hình)?)(?:\s*/\s*personal\s*identification)?\s*[:;,\-]?\s*",
+                "",
+                pi.strip(),
+                flags=re.IGNORECASE,
+            ).strip()
+            data["personal_identification"] = pi_clean or None
+
+        for short_field, pat in (
+            ("ethnic", r"^dân\s*tộc\s*[:;,\-]?\s*"),
+            ("religion", r"^tôn\s*giáo\s*[:;,\-]?\s*"),
+            ("signer_name", r"^(?:người\s*ký|ký\s*tên)\s*[:;,\-]?\s*"),
+        ):
+            sv = data.get(short_field)
+            if isinstance(sv, str):
+                sv_clean = re.sub(pat, "", sv.strip(), flags=re.IGNORECASE).strip()
+                if short_field == "signer_name":
+                    if any(
+                        bad in sv_clean.lower() for bad in ("ngón trỏ", "index finger", "cục trưởng", "cục cảnh sát", "bộ công an")
+                    ):
+                        sv_clean = ""
+                    elif sv_clean:
+                        sv_ascii = _strip_accents_lower(sv_clean)
+                        for ln in raw_texts:
+                            if _strip_accents_lower(ln) == sv_ascii:
+                                sv_clean = ln.strip()
+                                break
+                data[short_field] = sv_clean or None
+
+    # Clean & normalize Vietnamese addresses across front & back
+    for addr_field in ("origin_address", "residence_address", "place_of_birth"):
+        addr_val = data.get(addr_field)
+        if isinstance(addr_val, str):
+            cleaned_addr = re.sub(
+                r"^(?:(?:qu[eê]\s*qu[aáảàậ]n|nguy[eê]n\s*qu[aáảà]|n[ơoộ]i\s*đkhk\s*th[ưư][ơờ]ng\s*tr[uúủù]|n[ơoộ]i\s*th[ưư][ơờ]ng\s*tr[uúủù]|n[ơoộ]i\s*c[ưứu]\s*tr[uúủù]|n[ơoộ]i\s*đăng\s*k[yý]\s*khai\s*sinh)(?:\s*/\s*place\s*of\s*(?:origin|residence|birth))?|/?\s*place\s*of\s*(?:origin|residence|birth))\s*[:;,\-]?\s*",
+                "",
+                addr_val.strip(),
+                flags=re.IGNORECASE,
+            ).strip()
+            if cleaned_addr:
+                cleaned_addr = normalize_vietnamese_address(cleaned_addr) or cleaned_addr
+            data[addr_field] = cleaned_addr or None
+
+    # Extract & normalize TD1 3-line MRZ on back side
+    mrz_decoded_keys: set = set()
+    if card_side == "back":
+        m1: Optional[str] = None
+        m2: Optional[str] = None
+        m3: Optional[str] = None
+        for ln in reversed(raw_texts):
+            if m3 is None:
+                c3 = _clean_td1_mrz_line3(ln)
+                if c3:
+                    m3 = c3
+                    continue
+            if m2 is None:
+                c2 = _clean_td1_mrz_line2(ln)
+                if c2:
+                    m2 = c2
+                    continue
+            if m1 is None:
+                c1 = _clean_td1_mrz_line1(ln)
+                if c1:
+                    m1 = c1
+
+        if not m1 and isinstance(data.get("mrz_line1"), str):
+            m1 = _clean_td1_mrz_line1(data["mrz_line1"]) or data["mrz_line1"].strip() or None
+        if not m2 and isinstance(data.get("mrz_line2"), str):
+            m2 = _clean_td1_mrz_line2(data["mrz_line2"]) or data["mrz_line2"].strip() or None
+        if not m3 and isinstance(data.get("mrz_line3"), str):
+            m3 = _clean_td1_mrz_line3(data["mrz_line3"]) or data["mrz_line3"].strip() or None
+
+        if m1:
+            data["mrz_line1"] = m1
+        if m2:
+            data["mrz_line2"] = m2
+        if m3:
+            data["mrz_line3"] = m3
+
+        mrz_parsed = _parse_td1_mrz_fields(m1, m2, m3)
+        for k in _MRZ_FALLBACK_FIELDS:
+            mrz_val = mrz_parsed.get(k)
+            if not mrz_val:
+                continue
+            cur_val = data.get(k)
+            is_malformed_date = k in ("date_of_birth", "expiry_date") and isinstance(cur_val, str) and (
+                cur_val.strip() != "Không thời hạn"
+                and not re.fullmatch(r"\d{2}/\d{2}/\d{4}", cur_val.strip())
+            )
+            is_malformed_id = k == "id_number" and isinstance(cur_val, str) and not re.fullmatch(
+                r"\d{9}|\d{12}", cur_val.strip()
+            )
+            # On back-side cards, id_number / date_of_birth / gender / nationality are ONLY encoded in MRZ
+            # (not visually printed), so validated MRZ is authoritative against LLM date mix-ups (e.g., issue_date -> dob).
+            always_mrz_on_back = k in ("id_number", "date_of_birth", "gender", "nationality") or (
+                k == "expiry_date" and card_subtype == "CCCD gắn chip"
+            )
+            if always_mrz_on_back or cur_val in (None, "") or is_malformed_date or is_malformed_id:
+                data[k] = mrz_val
+                mrz_decoded_keys.add(k)
+
+    if isinstance(data.get("nationality"), str) and data["nationality"].strip().upper() == "VNM":
+        data["nationality"] = "Việt Nam"
+
+    return _filter_id_card_fields_plan_b(data, mrz_decoded_keys=mrz_decoded_keys)
+
+
+def _infer_document_layout_hint(lines: List[Dict[str, Any]]) -> Optional[Tuple[str, str, str]]:
+    """Pre-LLM deterministic layout hint for unambiguous ID card fronts/backs."""
+    if not lines:
+        return None
+    raw_texts = [str(it.get("text") or "").strip() for it in lines if isinstance(it, dict) and it.get("text")]
+    if not raw_texts:
+        return None
+    full_text = "\n".join(raw_texts)
+    low_text = full_text.lower()
+    ascii_low = _strip_accents_lower(full_text)
+    if any(cue in ascii_low for cue in ("ho chieu", "passport", "p<", "giay phep lai xe", "driver license", "driver's license")):
+        return None
+    has_id_cues = bool(re.search(r"(?<![a-z])idvnm", ascii_low)) or any(
+        cue in ascii_low
+        for cue in (
+            "can cuoc",
+            "chung minh nhan dan",
+            "giay chung minh",
+            "dac diem nhan dang",
+            "noi dang ky khai sinh",
+            "ngon tro trai",
+            "ngon tro phai",
+            "cuc truong cuc canh sat",
+            "bo cong an",
+            "so dinh danh ca nhan",
+            "que quan",
+            "nguyen quan",
+            "noi thuong tru",
+            "noi cu tru",
+        )
+    )
+    if not has_id_cues:
+        return None
+    card_side, card_subtype = _detect_id_card_side_and_subtype({}, raw_texts, low_text)
+    return ("id_card", card_subtype, card_side)
+
+
 def _postprocess_hybrid_extracted_data(data: Dict[str, Any], lines: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Deterministic guardrails over Hybrid LLM JSON output when raw OCR lines are available:
@@ -2400,46 +3163,30 @@ def _postprocess_hybrid_extracted_data(data: Dict[str, Any], lines: List[Dict[st
         doc_type in ("passport", "hộ chiếu")
         or (
             any(cue in low_text for cue in ("hộ chiếu", "hồ chiêu", "passport", "p<"))
-            and not any(cue in low_text for cue in ("căn cước", "chứng minh", "giấy phép lái xe"))
+            and not any(
+                cue in low_text
+                for cue in (
+                    "căn cước",
+                    "chứng minh",
+                    "giấy phép lái xe",
+                    "đặc điểm nhân dạng",
+                    "nơi đăng ký khai sinh",
+                    "idvnm",
+                )
+            )
         )
     )
 
     if has_passport_cues:
         return _postprocess_passport_extracted_data(data, lines)
 
-    if doc_type in ("id_card", "cccd", "cmnd", ""):
-        has_issue_place_cue = any(
-            cue in low_text
-            for cue in ("nơi cấp", "cục cảnh sát", "giám đốc", "công an tỉnh", "công an tp")
-        )
-        if not has_issue_place_cue:
-            data["issue_place"] = None
-
-        has_issue_date_cue = any(
-            cue in low_text
-            for cue in ("ngày cấp", "ngày, tháng, năm cấp", "date of issue")
-        )
-        if not has_issue_date_cue:
-            data["issue_date"] = None
-
-        if ("không thời" in low_text or "vô thời hạn" in low_text) and not data.get("expiry_date"):
-            data["expiry_date"] = "Không thời hạn"
-
-        for date_field in ("date_of_birth", "expiry_date", "issue_date"):
-            val = data.get(date_field)
-            if isinstance(val, str):
-                iso_m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", val.strip())
-                if iso_m:
-                    dmy = f"{iso_m.group(3)}/{iso_m.group(2)}/{iso_m.group(1)}"
-                    dmy_dash = f"{iso_m.group(3)}-{iso_m.group(2)}-{iso_m.group(1)}"
-                    if dmy in full_text:
-                        data[date_field] = dmy
-                    elif dmy_dash in full_text:
-                        data[date_field] = dmy_dash
-
-        nat = data.get("nationality")
-        if isinstance(nat, str) and nat.strip().lower() == "kinh" and "dân tộc" in low_text:
-            data["nationality"] = "Việt Nam" if "việt nam" in low_text else None
+    ascii_low = _strip_accents_lower(full_text)
+    has_gplx_cues = any(cue in ascii_low for cue in ("giay phep lai xe", "driver license", "driver's license"))
+    if (
+        doc_type in ("id_card", "cccd", "cmnd", "")
+        or (_infer_document_layout_hint(lines) is not None and not has_gplx_cues)
+    ):
+        return _postprocess_id_card_extracted_data(data, lines)
 
     for addr_field in ("origin_address", "residence_address"):
         addr_val = data.get(addr_field)
@@ -2715,6 +3462,12 @@ class OCREngineService:
             effective_model = getattr(settings, "OLLAMA_TEXT_MODEL", "qwen2.5:3b")
 
         rows_text = _format_paddle_ocr_lines_for_llm(ocr_lines)
+        layout_hint = _infer_document_layout_hint(ocr_lines)
+        hint_line = (
+            f"Gợi ý bố cục OCR (ưu tiên tuân theo): document_type={layout_hint[0]}, card_subtype={layout_hint[1]}, card_side={layout_hint[2]}\n"
+            if layout_hint
+            else ""
+        )
         payload = {
             "model": effective_model,
             "messages": [
@@ -2723,6 +3476,7 @@ class OCREngineService:
                     "role": "user",
                     "content": (
                         f"Kích thước ảnh thẻ: {seg_meta.cropped_dimensions}\n"
+                        f"{hint_line}"
                         f"Các dòng PaddleOCR-VL:\n{rows_text if rows_text else '(Không phát hiện được dòng chữ)'}"
                     ),
                 },
@@ -2732,7 +3486,7 @@ class OCREngineService:
             "format": "json",
             "options": {
                 "temperature": 0.0,
-                "num_ctx": min(settings.OLLAMA_NUM_CTX, 2048),
+                "num_ctx": settings.OLLAMA_NUM_CTX,
                 "num_predict": min(settings.OLLAMA_NUM_PREDICT, 768),
             },
         }
@@ -2830,8 +3584,8 @@ class OCREngineService:
                     and _strip_accents_lower(" ".join(raw_llm_val.split()))
                     == _strip_accents_lower(" ".join(val_str.split()))
                 )
-                llm_f = llm_field_confs.get(key) if (llm_matches_final or key in ("document_type", "card_subtype")) else None
-                if key in ("document_type", "card_subtype"):
+                llm_f = llm_field_confs.get(key) if (llm_matches_final or key in ("document_type", "card_subtype", "card_side")) else None
+                if key in ("document_type", "card_subtype", "card_side"):
                     if llm_f is not None:
                         field_confidences[key] = round(llm_f, 2)
                     continue
@@ -2865,6 +3619,54 @@ class OCREngineService:
                     field_confidences[key] = round(ocr_f, 2)
                 elif llm_f is not None:
                     field_confidences[key] = round(llm_f, 2)
+
+            # Auto-decode / override id_number, date_of_birth, gender, expiry_date, nationality
+            # from validated TD1 MRZ when any of those fields is missing or has a low score (<85%)
+            if extracted_data.get("document_type") == "id_card" and (
+                extracted_data.get("mrz_line1") or extracted_data.get("mrz_line2")
+            ):
+                mrz1_val = extracted_data.get("mrz_line1")
+                mrz2_val = extracted_data.get("mrz_line2")
+                mrz3_val = extracted_data.get("mrz_line3")
+                td1_parsed = _parse_td1_mrz_fields(mrz1_val, mrz2_val, mrz3_val)
+                mrz1_conf = field_confidences.get("mrz_line1")
+                mrz2_conf = field_confidences.get("mrz_line2")
+                if mrz1_conf is None and isinstance(mrz1_val, str):
+                    mrz1_conf = _match_value_ocr_confidence(
+                        mrz1_val, norm_ocr, norm_map, ascii_ocr, ascii_map, full_char_probs
+                    )
+                if mrz2_conf is None and isinstance(mrz2_val, str):
+                    mrz2_conf = _match_value_ocr_confidence(
+                        mrz2_val, norm_ocr, norm_map, ascii_ocr, ascii_map, full_char_probs
+                    )
+                mrz_decoded_keys: set = set()
+                for mrz_key in _MRZ_FALLBACK_FIELDS:
+                    mrz_val = td1_parsed.get(mrz_key)
+                    if not mrz_val:
+                        continue
+                    cur_val = extracted_data.get(mrz_key)
+                    cur_conf = field_confidences.get(mrz_key)
+                    is_bad_id = mrz_key == "id_number" and (
+                        not isinstance(cur_val, str) or not re.fullmatch(r"\d{9}|\d{12}", cur_val.strip())
+                    )
+                    is_bad_nat = mrz_key == "nationality" and isinstance(cur_val, str) and cur_val.strip().upper() == "VNM"
+                    if (
+                        cur_val in (None, "")
+                        or is_bad_id
+                        or is_bad_nat
+                        or cur_conf is None
+                        or float(cur_conf) < _MRZ_SCORE_THRESHOLD
+                    ):
+                        extracted_data[mrz_key] = mrz_val
+                        mrz_decoded_keys.add(mrz_key)
+                        src_conf = mrz1_conf if mrz_key == "id_number" else mrz2_conf
+                        if src_conf is not None:
+                            field_confidences[mrz_key] = round(float(src_conf), 2)
+                if mrz_decoded_keys:
+                    extracted_data = _filter_id_card_fields_plan_b(
+                        extracted_data, mrz_decoded_keys=mrz_decoded_keys
+                    )
+                    field_confidences = {k: v for k, v in field_confidences.items() if k in extracted_data}
 
         seg_meta.pipeline_mode = "hybrid_paddle_vl"
         seg_meta.ocr_lines_count = len(ocr_lines)

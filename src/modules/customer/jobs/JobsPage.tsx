@@ -4,20 +4,14 @@ import {
   FileText,
   Search,
   UploadCloud,
-  CheckCircle2,
-  Clock,
   AlertTriangle,
   RotateCcw,
   RotateCw,
   Eye,
-  Filter,
-  FileCode,
-  Download,
   Loader2,
   LogIn,
   Crop,
   Image as ImageIcon,
-  Maximize2,
   Sparkles,
 } from 'lucide-react';
 import { usePlatformStore } from '@/stores/usePlatformStore';
@@ -28,36 +22,12 @@ import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { Input, Select } from '@/components/ui/form-controls';
 import { OCRJob } from '@/types';
-import { formatNumber, formatDateTime } from '@/utils/formatters';
 import { ocrApi } from '@/services/api/endpoints';
 import { api } from '@/services/api/client';
-
-const FIELD_LABELS: Record<string, string> = {
-  document_type: 'Loại giấy tờ (Document Type)',
-  card_subtype: 'Phân loại thẻ (Card Subtype)',
-  id_number: 'Số định danh / CCCD (ID Number)',
-  passport_number: 'Số hộ chiếu (Passport No.)',
-  passport_type: 'Loại hộ chiếu (Passport Type)',
-  country_code: 'Mã quốc gia (Country Code)',
-  license_number: 'Số GPLX (License No.)',
-  license_class: 'Hạng bằng lái (Class)',
-  full_name: 'Họ và tên (Full Name)',
-  date_of_birth: 'Ngày sinh (Date of Birth)',
-  gender: 'Giới tính (Gender)',
-  nationality: 'Quốc tịch (Nationality)',
-  origin_address: 'Quê quán (Place of Origin)',
-  residence_address: 'Nơi thường trú / Cư trú (Residence)',
-  place_of_birth: 'Nơi sinh (Place of Birth)',
-  issue_date: 'Ngày cấp (Issue Date)',
-  expiry_date: 'Có giá trị đến (Expiry Date)',
-  issue_place: 'Nơi cấp (Place of Issue)',
-  issue_authority: 'Cơ quan cấp (Issuing Authority)',
-  id_card_number: 'Số CMND/CCCD gốc',
-  mrz_line1: 'Dòng MRZ 1',
-  mrz_line2: 'Dòng MRZ 2',
-};
+import { useTranslation, localizeServiceName } from '@/i18n';
 
 export const JobsPage: React.FC = () => {
+  const { t, dict, intlLocale } = useTranslation();
   const navigate = useNavigate();
   const {
     jobs,
@@ -83,15 +53,30 @@ export const JobsPage: React.FC = () => {
   const customer = currentUser
     ? {
         id: currentUser.id,
-        orgName: currentUser.company_name || currentUser.full_name || currentUser.email || 'My Organization',
+        orgName:
+          currentUser.company_name ||
+          currentUser.full_name ||
+          currentUser.email ||
+          t('common.myOrganization'),
       }
     : customers.find((c) => c.id === effectiveCustomerId) || customers[0];
+
+  const getDocTypeDisplay = (docTypeId?: string, fallbackName?: string) => {
+    if (docTypeId && docTypeId in dict.jobs.docTypes) {
+      return dict.jobs.docTypes[docTypeId as keyof typeof dict.jobs.docTypes];
+    }
+    return fallbackName || dict.jobs.docTypes.identity_document;
+  };
+
+  const getFieldLabel = (key: string) => {
+    const fieldMap = dict.jobs.fields as Record<string, string>;
+    return fieldMap[key] || key.replace(/_/g, ' ');
+  };
 
   const customerJobs = jobs
     .map((j) => (j.status === 'processing' && j.extractedDataPreview ? { ...j, status: 'completed' as const } : j))
     .filter((j) => j.customerId === effectiveCustomerId);
 
-  // Filter purchased services (from active licenses or active/expiring subscriptions)
   const customerLicenses = licenses.filter(
     (l) =>
       (l.customerId === effectiveCustomerId || (!currentUser && l.customerId === activeCustomerId)) &&
@@ -125,7 +110,6 @@ export const JobsPage: React.FC = () => {
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [manualRotateDeg, setManualRotateDeg] = useState<number>(0);
 
-  // Upload form state - Only select from purchased services, no page count input needed
   const [fileName, setFileName] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadServiceId, setUploadServiceId] = useState('');
@@ -221,7 +205,7 @@ export const JobsPage: React.FC = () => {
     setUploadError(null);
 
     if (!isAuthenticated) {
-      setUploadError('Yêu cầu xác thực: Vui lòng đăng nhập (Bearer JWT) hoặc cung cấp Header \'X-API-Key\'');
+      setUploadError(t('jobs.authErrorMsg'));
       return;
     }
 
@@ -244,7 +228,7 @@ export const JobsPage: React.FC = () => {
         }
 
         const res = await ocrApi.processIdentity(formData);
-        const nowStr = new Date().toLocaleString();
+        const nowStr = new Date().toLocaleString(intlLocale);
         const createdJob: OCRJob = {
           id: res.job_id || `JOB-${Date.now().toString().slice(-6)}`,
           customerId: customer.id,
@@ -255,14 +239,7 @@ export const JobsPage: React.FC = () => {
           serviceId: srv.id,
           serviceName: srv.name,
           docTypeId: res.detected_type || 'identity_document',
-          docTypeName:
-            res.detected_type === 'id_card'
-              ? 'Căn cước công dân (CCCD)'
-              : res.detected_type === 'passport'
-              ? 'Hộ chiếu (Passport)'
-              : res.detected_type === 'driver_license'
-              ? 'Giấy phép lái xe (GPLX)'
-              : 'Giấy tờ tùy thân',
+          docTypeName: getDocTypeDisplay(res.detected_type),
           submissionTime: nowStr,
           completionTime: nowStr,
           pageCount: 1,
@@ -296,13 +273,12 @@ export const JobsPage: React.FC = () => {
             ? err.detail
             : typeof err?.detail?.message === 'string'
             ? err.detail.message
-            : 'Lỗi khi kết nối hoặc xử lý bóc tách tài liệu với VLM.';
+            : t('jobs.ocrProcessError');
         setUploadError(String(errMsg));
       } finally {
         setIsProcessing(false);
       }
     } else {
-      // Fallback mock nếu người dùng chỉ nhập tên file mà không chọn file ảnh thật
       submitNewJob({
         customerId: customer.id,
         customerName: customer.orgName,
@@ -317,7 +293,7 @@ export const JobsPage: React.FC = () => {
         processingDurationMs: 1420,
         confidenceScore: 0,
         extractedDataPreview: {
-          note: 'Mock execution (vui lòng chọn file ảnh thật để kích hoạt Hybrid PaddleOCR-VL)',
+          note: t('jobs.mockNote'),
           file: fileName,
         },
       });
@@ -342,11 +318,14 @@ export const JobsPage: React.FC = () => {
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <Breadcrumbs items={[{ label: 'Customer Portal', path: '/app/dashboard' }, { label: 'OCR Jobs' }]} />
-          <h1 className="text-2xl font-bold text-slate-900 mt-1 tracking-tight">OCR Jobs & Processing</h1>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Monitor real-time document parsing status, inspect segmented ID images, and review structured OCR output.
-          </p>
+          <Breadcrumbs
+            items={[
+              { label: t('common.customerPortal'), path: '/app/dashboard' },
+              { label: t('jobs.breadcrumbCurrent') },
+            ]}
+          />
+          <h1 className="text-2xl font-bold text-slate-900 mt-1 tracking-tight">{t('jobs.title')}</h1>
+          <p className="text-xs text-slate-500 mt-0.5">{t('jobs.subtitle')}</p>
         </div>
         <div className="flex items-center gap-3">
           <Button
@@ -356,11 +335,11 @@ export const JobsPage: React.FC = () => {
             disabled={isRefreshing}
           >
             <RotateCw className={`h-4 w-4 mr-1.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-            {isRefreshing ? 'Syncing...' : 'Refresh'}
+            {isRefreshing ? t('common.syncing') : t('common.refresh')}
           </Button>
           <Button onClick={() => { setUploadError(null); setIsUploadOpen(true); }} variant="primary" size="sm">
             <UploadCloud className="h-4 w-4 mr-1.5" />
-            Upload File for OCR
+            {t('jobs.uploadBtn')}
           </Button>
         </div>
       </div>
@@ -373,7 +352,7 @@ export const JobsPage: React.FC = () => {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
               <input
                 type="text"
-                placeholder="Search by Job ID, file name..."
+                placeholder={t('jobs.searchPlaceholder')}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:outline-none focus:border-blue-500 focus:bg-white transition-all"
@@ -383,18 +362,21 @@ export const JobsPage: React.FC = () => {
               <Select
                 value={selectedService}
                 onChange={(e) => setSelectedService(e.target.value)}
-                options={[{ value: 'all', label: 'All Services' }, ...filterServices.map((s) => ({ value: s.id, label: s.name }))]}
+                options={[
+                  { value: 'all', label: t('jobs.allServices') },
+                  ...filterServices.map((s) => ({ value: s.id, label: localizeServiceName(s.name, dict) })),
+                ]}
                 className="w-full md:w-48 text-xs py-1.5"
               />
               <Select
                 value={selectedStatus}
                 onChange={(e) => setSelectedStatus(e.target.value)}
                 options={[
-                  { value: 'all', label: 'All Statuses' },
-                  { value: 'completed', label: 'Completed' },
-                  { value: 'processing', label: 'Processing' },
-                  { value: 'queued', label: 'Queued' },
-                  { value: 'failed', label: 'Failed' },
+                  { value: 'all', label: t('jobs.allStatuses') },
+                  { value: 'completed', label: t('common.statuses.completed') },
+                  { value: 'processing', label: t('common.statuses.processing') },
+                  { value: 'queued', label: t('common.statuses.queued') },
+                  { value: 'failed', label: t('common.statuses.failed') },
                 ]}
                 className="w-full md:w-36 text-xs py-1.5"
               />
@@ -408,9 +390,11 @@ export const JobsPage: React.FC = () => {
         <CardHeader className="pb-3 border-b border-slate-100">
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle className="text-base font-semibold">Processed Documents ({filteredJobs.length})</CardTitle>
+              <CardTitle className="text-base font-semibold">
+                {t('jobs.processedDocsTitle', { count: filteredJobs.length })}
+              </CardTitle>
               <CardDescription className="text-xs">
-                Historical record of API & UI document extraction requests.
+                {t('jobs.processedDocsDesc')}
               </CardDescription>
             </div>
           </div>
@@ -420,21 +404,21 @@ export const JobsPage: React.FC = () => {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50/75 border-b border-slate-200 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
-                  <th className="py-3 px-4">Job ID</th>
-                  <th className="py-3 px-4">File Name</th>
-                  <th className="py-3 px-4">OCR Service</th>
-                  <th className="py-3 px-4">Pages</th>
-                  <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4">Confidence</th>
-                  <th className="py-3 px-4">Submitted At</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
+                  <th className="py-3 px-4">{t('jobs.colJobId')}</th>
+                  <th className="py-3 px-4">{t('jobs.colFileName')}</th>
+                  <th className="py-3 px-4">{t('jobs.colService')}</th>
+                  <th className="py-3 px-4">{t('jobs.colPages')}</th>
+                  <th className="py-3 px-4">{t('common.status')}</th>
+                  <th className="py-3 px-4">{t('jobs.colConfidence')}</th>
+                  <th className="py-3 px-4">{t('jobs.colSubmittedAt')}</th>
+                  <th className="py-3 px-4 text-right">{t('common.actions')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs">
                 {filteredJobs.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="py-8 text-center text-slate-400">
-                      No OCR jobs found matching criteria.
+                      {t('jobs.empty')}
                     </td>
                   </tr>
                 ) : (
@@ -458,25 +442,27 @@ export const JobsPage: React.FC = () => {
                             <span className="font-medium text-slate-800">{job.fileName}</span>
                             <span className="block text-[10px] text-slate-400">
                               {job.fileSize} • {job.fileType}
-                              {job.segmentationInfo?.detected && ' • ID Segmented'}
+                              {job.segmentationInfo?.detected && ` • ${t('jobs.idSegmented')}`}
                             </span>
                           </div>
                         </div>
                       </td>
                       <td className="py-3.5 px-4 text-slate-700">
                         <div>
-                          <p className="font-medium">{job.serviceName}</p>
-                          <p className="text-[10px] text-slate-400">{job.docTypeName}</p>
+                          <p className="font-medium">{localizeServiceName(job.serviceName, dict)}</p>
+                          <p className="text-[10px] text-slate-400">
+                            {getDocTypeDisplay(job.docTypeId, job.docTypeName)}
+                          </p>
                         </div>
                       </td>
                       <td className="py-3.5 px-4 text-slate-600 font-mono">
                         {job.pageCount}
                       </td>
                       <td className="py-3.5 px-4">
-                        {job.status === 'completed' && <Badge variant="success">Completed</Badge>}
-                        {job.status === 'processing' && <Badge variant="info">Processing</Badge>}
-                        {job.status === 'queued' && <Badge variant="warning">Queued</Badge>}
-                        {job.status === 'failed' && <Badge variant="danger">Failed</Badge>}
+                        {job.status === 'completed' && <Badge variant="success">{t('common.statuses.completed')}</Badge>}
+                        {job.status === 'processing' && <Badge variant="info">{t('common.statuses.processing')}</Badge>}
+                        {job.status === 'queued' && <Badge variant="warning">{t('common.statuses.queued')}</Badge>}
+                        {job.status === 'failed' && <Badge variant="danger">{t('common.statuses.failed')}</Badge>}
                       </td>
                       <td className="py-3.5 px-4 font-mono">
                         {job.confidenceScore !== undefined && job.confidenceScore !== null ? `${job.confidenceScore.toFixed(1)}%` : '—'}
@@ -491,9 +477,9 @@ export const JobsPage: React.FC = () => {
                             size="sm"
                             onClick={() => handleOpenDetail(job)}
                             className="h-7 px-2 text-slate-600 hover:text-blue-600"
-                            title="Inspect Images & OCR Result"
+                            title={t('jobs.inspectTooltip')}
                           >
-                            <Eye className="h-3.5 w-3.5 mr-1" /> View
+                            <Eye className="h-3.5 w-3.5 mr-1" /> {t('common.view')}
                           </Button>
                           {job.status === 'failed' && (
                             <Button
@@ -501,9 +487,9 @@ export const JobsPage: React.FC = () => {
                               size="sm"
                               onClick={() => handleRetry(job.id)}
                               className="h-7 px-2 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
-                              title="Re-execute Job"
+                              title={t('jobs.retryTooltip')}
                             >
-                              <RotateCcw className="h-3.5 w-3.5 mr-1" /> Retry
+                              <RotateCcw className="h-3.5 w-3.5 mr-1" /> {t('jobs.retryBtn')}
                             </Button>
                           )}
                         </div>
@@ -521,8 +507,8 @@ export const JobsPage: React.FC = () => {
       <Modal
         isOpen={isDetailOpen}
         onClose={() => setIsDetailOpen(false)}
-        title={`Chi tiết xử lý OCR: ${selectedJob?.id}`}
-        description="Thông tin hình ảnh gốc, hình ảnh giấy tờ tùy thân đã tách nền & tự động xoay thẳng (Crop & Auto-Rotate ID) và kết quả bóc tách OCR"
+        title={t('jobs.detailTitle', { id: selectedJob?.id || '' })}
+        description={t('jobs.detailDesc')}
         maxWidth="4xl"
       >
         {selectedJob && (
@@ -530,37 +516,39 @@ export const JobsPage: React.FC = () => {
             {/* Top Summary Metrics */}
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
               <div>
-                <span className="block text-[10px] text-slate-400 font-medium uppercase">Loại giấy tờ</span>
-                <span className="text-xs font-semibold text-slate-800">{selectedJob.docTypeName}</span>
+                <span className="block text-[10px] text-slate-400 font-medium uppercase">{t('jobs.metricDocType')}</span>
+                <span className="text-xs font-semibold text-slate-800">
+                  {getDocTypeDisplay(selectedJob.docTypeId, selectedJob.docTypeName)}
+                </span>
               </div>
               <div>
-                <span className="block text-[10px] text-slate-400 font-medium uppercase">Định dạng & File</span>
+                <span className="block text-[10px] text-slate-400 font-medium uppercase">{t('jobs.metricFormatFile')}</span>
                 <span className="text-xs font-semibold text-slate-800 truncate block" title={selectedJob.fileName}>
                   {selectedJob.fileType} ({selectedJob.fileSize})
                 </span>
               </div>
               <div>
-                <span className="block text-[10px] text-slate-400 font-medium uppercase">Độ tin cậy (Confidence)</span>
+                <span className="block text-[10px] text-slate-400 font-medium uppercase">{t('jobs.metricConfidence')}</span>
                 <span className="text-xs font-semibold text-emerald-600 font-mono">
                   {selectedJob.confidenceScore !== undefined && selectedJob.confidenceScore !== null ? `${selectedJob.confidenceScore.toFixed(1)}%` : '—'}
                 </span>
               </div>
               <div>
-                <span className="block text-[10px] text-slate-400 font-medium uppercase">Thời gian xử lý</span>
+                <span className="block text-[10px] text-slate-400 font-medium uppercase">{t('jobs.metricDuration')}</span>
                 <span className="text-xs font-semibold text-slate-800 font-mono">
                   {selectedJob.processingDurationMs} ms
                 </span>
               </div>
               <div>
-                <span className="block text-[10px] text-slate-400 font-medium uppercase">Tách nền & Xoay thẳng</span>
+                <span className="block text-[10px] text-slate-400 font-medium uppercase">{t('jobs.metricSegmentation')}</span>
                 {selectedJob.segmentationInfo ? (
                   <span className="text-xs font-semibold text-blue-600 flex items-center gap-1">
                     <Crop className="h-3.5 w-3.5" />
                     {selectedJob.segmentationInfo.detected
-                      ? `Đã cắt (${Math.round((selectedJob.segmentationInfo.crop_area_ratio || 1) * 100)}%)`
-                      : 'Ảnh sát viền'}
+                      ? t('jobs.croppedRatio', { pct: Math.round((selectedJob.segmentationInfo.crop_area_ratio || 1) * 100) })
+                      : t('jobs.fullFrameEdge')}
                     {selectedJob.segmentationInfo.rotation_applied_deg
-                      ? ` • Xoay ${selectedJob.segmentationInfo.rotation_applied_deg}°`
+                      ? ` ${t('jobs.rotatedDeg', { deg: selectedJob.segmentationInfo.rotation_applied_deg })}`
                       : ''}
                   </span>
                 ) : (
@@ -577,7 +565,7 @@ export const JobsPage: React.FC = () => {
                   <div className="px-3.5 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
                     <div className="flex items-center gap-1.5">
                       <ImageIcon className="h-4 w-4 text-slate-600" />
-                      <span className="text-xs font-semibold text-slate-800">1. Hình ảnh gốc (Original Image)</span>
+                      <span className="text-xs font-semibold text-slate-800">{t('jobs.originalImageTitle')}</span>
                     </div>
                     {selectedJob.segmentationInfo?.original_dimensions && (
                       <Badge variant="slate" size="sm">
@@ -593,7 +581,6 @@ export const JobsPage: React.FC = () => {
                           alt="Original Uploaded Document"
                           className="max-h-[250px] w-auto object-contain rounded border border-slate-700"
                         />
-                        {/* Visual Bounding Box Overlay */}
                         {(() => {
                           const seg = selectedJob.segmentationInfo;
                           const origDims = parseDimensions(seg?.original_dimensions);
@@ -625,13 +612,14 @@ export const JobsPage: React.FC = () => {
                         })()}
                       </div>
                     ) : (
-                      <span className="text-xs text-slate-400">Không có dữ liệu ảnh gốc</span>
+                      <span className="text-xs text-slate-400">{t('jobs.noOriginalImage')}</span>
                     )}
                   </div>
                   {selectedJob.segmentationInfo && (
                     <div className="px-3.5 py-2 bg-slate-50 border-t border-slate-200 text-[11px] text-slate-600 flex flex-wrap items-center justify-between gap-2">
                       <span>
-                        Kích thước gốc: <strong className="font-mono text-slate-800">{selectedJob.segmentationInfo.original_dimensions || 'N/A'}</strong>
+                        {t('jobs.originalDimensions')}{' '}
+                        <strong className="font-mono text-slate-800">{selectedJob.segmentationInfo.original_dimensions || t('common.na')}</strong>
                       </span>
                       {selectedJob.segmentationInfo.bbox?.length === 4 && (
                         <span className="font-mono text-[10px] text-slate-500">
@@ -647,14 +635,14 @@ export const JobsPage: React.FC = () => {
                   <div className="px-3.5 py-2.5 bg-blue-50/70 border-b border-blue-200 flex items-center justify-between gap-2">
                     <div className="flex items-center gap-1.5">
                       <Crop className="h-4 w-4 text-blue-600" />
-                      <span className="text-xs font-semibold text-blue-950">2. Hình ảnh ID đã Crop & Xoay thẳng</span>
+                      <span className="text-xs font-semibold text-blue-950">{t('jobs.croppedImageTitle')}</span>
                     </div>
                     <div className="flex items-center gap-1.5">
                       <button
                         type="button"
                         onClick={() => setManualRotateDeg((prev) => (prev - 90 + 360) % 360)}
                         className="p-1 rounded bg-white border border-blue-200 text-blue-700 hover:bg-blue-100 transition-colors"
-                        title="Xoay ngược chiều kim đồng hồ 90°"
+                        title={t('jobs.rotateCCW')}
                       >
                         <RotateCcw className="h-3.5 w-3.5" />
                       </button>
@@ -662,7 +650,7 @@ export const JobsPage: React.FC = () => {
                         type="button"
                         onClick={() => setManualRotateDeg((prev) => (prev + 90) % 360)}
                         className="p-1 rounded bg-white border border-blue-200 text-blue-700 hover:bg-blue-100 transition-colors"
-                        title="Xoay theo chiều kim đồng hồ 90°"
+                        title={t('jobs.rotateCW')}
                       >
                         <RotateCw className="h-3.5 w-3.5" />
                       </button>
@@ -685,24 +673,24 @@ export const JobsPage: React.FC = () => {
                         className="max-h-[240px] max-w-[92%] w-auto object-contain rounded border-2 border-blue-400/80 shadow-lg"
                       />
                     ) : (
-                      <span className="text-xs text-slate-400">Không có dữ liệu ảnh đã crop</span>
+                      <span className="text-xs text-slate-400">{t('jobs.noCroppedImage')}</span>
                     )}
                   </div>
                   {selectedJob.segmentationInfo && (
                     <div className="px-3.5 py-2 bg-blue-50/40 border-t border-blue-100 text-[11px] text-slate-600 flex flex-wrap items-center justify-between gap-2">
                       <span>
-                        Diện tích thẻ:{' '}
+                        {t('jobs.cardAreaRatio')}{' '}
                         <strong className="font-mono text-blue-700">
                           {((selectedJob.segmentationInfo.crop_area_ratio || 1) * 100).toFixed(1)}%
                         </strong>
                         {selectedJob.segmentationInfo.rotation_applied_deg ? (
                           <span className="ml-1.5 text-emerald-700 font-semibold">
-                            • Đã tự xoay thẳng ({selectedJob.segmentationInfo.rotation_applied_deg}°)
+                            {t('jobs.autoRotated', { deg: selectedJob.segmentationInfo.rotation_applied_deg })}
                           </span>
                         ) : null}
                       </span>
                       <span className="font-mono text-[10px] text-slate-500">
-                        Method: {selectedJob.segmentationInfo.method}
+                        {t('jobs.methodLabel')} {selectedJob.segmentationInfo.method}
                         {selectedJob.segmentationInfo.pipeline_mode ? ` • ${selectedJob.segmentationInfo.pipeline_mode.toUpperCase()}` : ''}
                       </span>
                       {selectedJob.segmentationInfo.stage_timings_ms && Object.keys(selectedJob.segmentationInfo.stage_timings_ms).length > 0 && (
@@ -714,7 +702,10 @@ export const JobsPage: React.FC = () => {
                             <span>TextDet: {Math.round(selectedJob.segmentationInfo.stage_timings_ms.text_det_ms)}ms</span>
                           )}
                           {selectedJob.segmentationInfo.stage_timings_ms.paddleocr_vl_ms !== undefined && (
-                            <span>PaddleOCR-VL ({selectedJob.segmentationInfo.ocr_lines_count || 0} dòng): {Math.round(selectedJob.segmentationInfo.stage_timings_ms.paddleocr_vl_ms)}ms</span>
+                            <span>
+                              PaddleOCR-VL ({t('jobs.linesCount', { count: selectedJob.segmentationInfo.ocr_lines_count || 0 })}):{' '}
+                              {Math.round(selectedJob.segmentationInfo.stage_timings_ms.paddleocr_vl_ms)}ms
+                            </span>
                           )}
                           {selectedJob.segmentationInfo.stage_timings_ms.llm_map_ms !== undefined && (
                             <span>LLM Map: {Math.round(selectedJob.segmentationInfo.stage_timings_ms.llm_map_ms)}ms</span>
@@ -742,10 +733,10 @@ export const JobsPage: React.FC = () => {
                 <div className="flex items-center gap-1.5">
                   <Sparkles className="h-4 w-4 text-blue-600" />
                   <span className="text-xs font-semibold text-slate-900">
-                    3. Kết quả bóc tách thông tin OCR (Extracted Identity Fields)
+                    {t('jobs.extractedSectionTitle')}
                   </span>
                 </div>
-                <Badge variant="success" size="sm">VLM Extracted</Badge>
+                <Badge variant="success" size="sm">{t('jobs.vlmExtractedBadge')}</Badge>
               </div>
 
               {selectedJob.extractedDataPreview && typeof selectedJob.extractedDataPreview === 'object' && (
@@ -767,14 +758,17 @@ export const JobsPage: React.FC = () => {
                         <div
                           key={key}
                           className={`bg-white p-2.5 rounded-lg border border-slate-200/80 shadow-2xs ${
-                            key === 'residence_address' || key === 'origin_address' || key.startsWith('mrz_')
+                            key === 'residence_address' ||
+                            key === 'origin_address' ||
+                            key === 'personal_identification' ||
+                            key.startsWith('mrz_')
                               ? 'sm:col-span-2 lg:col-span-3'
                               : ''
                           }`}
                         >
                           <div className="flex items-center justify-between gap-2">
                             <span className="block text-[10px] font-medium text-slate-400 uppercase tracking-wide">
-                              {FIELD_LABELS[key] || key.replace(/_/g, ' ')}
+                              {getFieldLabel(key)}
                             </span>
                             {fieldConf !== undefined && fieldConf !== null && (
                               <span className={`px-1.5 py-0.5 rounded border text-[10px] font-mono font-semibold shrink-0 ${confClass}`}>
@@ -793,7 +787,7 @@ export const JobsPage: React.FC = () => {
 
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-xs font-semibold text-slate-700">Raw Structured JSON Payload</span>
+                  <span className="text-xs font-semibold text-slate-700">{t('jobs.rawJsonTitle')}</span>
                   <Badge variant="slate" size="sm">application/json</Badge>
                 </div>
                 <pre className="p-3 bg-slate-900 text-emerald-400 font-mono text-[11px] rounded-lg overflow-x-auto max-h-56">
@@ -818,7 +812,7 @@ export const JobsPage: React.FC = () => {
 
             <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
               <Button onClick={() => setIsDetailOpen(false)} variant="outline" size="sm">
-                Close
+                {t('common.close')}
               </Button>
             </div>
           </div>
@@ -829,17 +823,17 @@ export const JobsPage: React.FC = () => {
       <Modal
         isOpen={isUploadOpen}
         onClose={() => { if (!isProcessing) setIsUploadOpen(false); }}
-        title="Execute OCR Job"
-        description="CV tự động cắt nền & xoay thẳng thẻ ID trước khi gửi sang VLM trích xuất dữ liệu"
+        title={t('jobs.uploadModalTitle')}
+        description={t('jobs.uploadModalDesc')}
       >
         <form onSubmit={handleUploadSubmit} className="space-y-4">
           {!isAuthenticated && (
             <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-xs flex items-start gap-2.5">
               <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
               <div className="flex-1">
-                <p className="font-semibold text-amber-900">Yêu cầu đăng nhập tài khoản</p>
+                <p className="font-semibold text-amber-900">{t('jobs.authRequiredTitle')}</p>
                 <p className="mt-0.5 text-slate-600 leading-relaxed">
-                  Để gọi mô hình VLM bóc tách và trừ Quota bản quyền, bạn cần đăng nhập tài khoản khách hàng (ví dụ: <strong className="text-slate-800">thanhpt93.hd@gmail.com</strong>).
+                  {t('jobs.authRequiredDesc')}
                 </p>
                 <Button
                   type="button"
@@ -848,14 +842,14 @@ export const JobsPage: React.FC = () => {
                   className="mt-2.5 text-xs bg-amber-600 hover:bg-amber-700 text-white font-medium"
                 >
                   <LogIn className="h-3.5 w-3.5 mr-1" />
-                  Đến trang Đăng nhập
+                  {t('jobs.goToLogin')}
                 </Button>
               </div>
             </div>
           )}
 
           <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">Document File</label>
+            <label className="block text-xs font-medium text-slate-700 mb-1">{t('jobs.documentFileLabel')}</label>
             <div className="border-2 border-dashed border-slate-200 hover:border-blue-400 rounded-lg p-4 text-center cursor-pointer transition-colors bg-slate-50 relative mb-2">
               <input
                 type="file"
@@ -873,31 +867,29 @@ export const JobsPage: React.FC = () => {
               />
               <UploadCloud className="h-6 w-6 text-slate-400 mx-auto mb-1.5" />
               <p className="text-xs font-medium text-slate-700">
-                {fileName ? fileName : 'Click or drag image file here (CCCD, Hộ chiếu, GPLX)'}
+                {fileName ? fileName : t('jobs.uploadDropzonePrompt')}
               </p>
-              <p className="text-[10px] text-slate-400 mt-0.5">Hỗ trợ tự động tách nền & xoay thẳng ID (JPG, PNG, WEBP)</p>
+              <p className="text-[10px] text-slate-400 mt-0.5">{t('jobs.uploadDropzoneHint')}</p>
             </div>
             <Input
               type="text"
               value={fileName}
               disabled={isProcessing}
               onChange={(e) => setFileName(e.target.value)}
-              placeholder="Or enter file name..."
+              placeholder={t('jobs.fileNamePlaceholder')}
               required
               className="text-xs"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">OCR Model / Service</label>
+            <label className="block text-xs font-medium text-slate-700 mb-1">{t('jobs.serviceSelectLabel')}</label>
             {purchasedServices.length === 0 ? (
               <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-xs flex items-start gap-2">
                 <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
                 <div>
-                  <p className="font-semibold">Chưa có dịch vụ OCR khả dụng</p>
-                  <p className="mt-0.5 text-slate-600">
-                    Bạn chưa có License hoặc Subscription đang hoạt động cho dịch vụ nào. Vui lòng mua gói cước hoặc kích hoạt License Key trước khi gửi tác vụ OCR.
-                  </p>
+                  <p className="font-semibold">{t('jobs.noPurchasedTitle')}</p>
+                  <p className="mt-0.5 text-slate-600">{t('jobs.noPurchasedDesc')}</p>
                 </div>
               </div>
             ) : (
@@ -906,32 +898,30 @@ export const JobsPage: React.FC = () => {
                   value={uploadServiceId}
                   disabled={isProcessing}
                   onChange={(e) => setUploadServiceId(e.target.value)}
-                  options={purchasedServices.map((s) => ({ value: s.id, label: `${s.name} (${s.code})` }))}
+                  options={purchasedServices.map((s) => ({ value: s.id, label: `${localizeServiceName(s.name, dict)} (${s.code})` }))}
                   className="text-xs"
                 />
-                <p className="text-[11px] text-slate-400 mt-1">
-                  Chỉ hiển thị các dịch vụ OCR bạn đã mua và đang có bản quyền kích hoạt.
-                </p>
+                <p className="text-[11px] text-slate-400 mt-1">{t('jobs.purchasedOnlyHint')}</p>
               </div>
             )}
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">OCR Pipeline</label>
+            <label className="block text-xs font-medium text-slate-700 mb-1">{t('jobs.pipelineLabel')}</label>
             <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 font-medium">
-              Hybrid (DocAligner + RapidOCR + PaddleOCR-VL 1.6 Vi GPU)
+              {t('jobs.pipelineValue')}
             </div>
           </div>
 
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="block text-xs font-medium text-slate-700">
-                Text LLM Model (JSON Mapper - Ollama)
+                {t('jobs.llmModelLabel')}
               </label>
               {vlmHealth && (
                 <span className={`text-[10px] font-medium ${vlmHealth.ollama_status === 'running' ? 'text-emerald-600' : 'text-amber-600'}`}>
-                  Ollama: {vlmHealth.ollama_status === 'running' ? 'Online' : 'Offline'}
-                  <> • PaddleOCR-VL-Vi: {vlmHealth.paddleocr_vl_ready && vlmHealth.rapidocr_ready ? 'Ready' : 'Chưa cài'}</>
+                  Ollama: {vlmHealth.ollama_status === 'running' ? t('adminMonitoring.online') : t('adminMonitoring.offline')}
+                  <> • PaddleOCR-VL-Vi: {vlmHealth.paddleocr_vl_ready && vlmHealth.rapidocr_ready ? t('jobs.ready') : t('jobs.notInstalled')}</>
                 </span>
               )}
             </div>
@@ -951,23 +941,21 @@ export const JobsPage: React.FC = () => {
                     }));
                   }
                   return [
-                    { value: 'qwen2.5:3b', label: 'Hybrid: Qwen2.5 3B Text (Khuyên dùng) [~1.9 GB]' },
+                    { value: 'qwen2.5:3b', label: t('jobs.recommendedModelFallback') },
                   ];
                 })()
               }
               className="text-xs"
             />
             <p className="text-[11px] text-slate-400 mt-1">
-              Pipeline sử dụng <strong>DocAligner + RapidOCR + PaddleOCR-VL 1.6 Vi (Ollama GPU)</strong> đọc chữ Việt (kể cả CMND cũ/mờ) rồi gửi sang LLM text nhẹ (<strong>{selectedModel}</strong>) để chuẩn hóa JSON.
+              {t('jobs.pipelineHintPrefix', { model: selectedModel })}
             </p>
           </div>
 
           {isProcessing && (
             <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-blue-800 text-xs flex items-center gap-2">
               <Loader2 className="h-4 w-4 animate-spin text-blue-600 shrink-0" />
-              <span>
-                {`Đang tách nền DocAligner, đọc PaddleOCR-VL 1.6 Vi (GPU) và chuẩn hóa JSON bằng ${selectedModel}...`}
-              </span>
+              <span>{t('jobs.processingBanner', { model: selectedModel })}</span>
             </div>
           )}
 
@@ -979,7 +967,7 @@ export const JobsPage: React.FC = () => {
                   {typeof uploadError === 'string' ? uploadError : JSON.stringify(uploadError)}
                 </span>
               </div>
-              {String(uploadError).toLowerCase().includes('xác thực') && (
+              {(!isAuthenticated || /xác thực|authentication|인증|401/i.test(String(uploadError))) && (
                 <Button
                   type="button"
                   size="sm"
@@ -987,7 +975,7 @@ export const JobsPage: React.FC = () => {
                   className="self-start text-xs bg-rose-600 hover:bg-rose-700 text-white font-medium"
                 >
                   <LogIn className="h-3.5 w-3.5 mr-1" />
-                  Đăng nhập ngay
+                  {t('jobs.loginNow')}
                 </Button>
               )}
             </div>
@@ -995,7 +983,7 @@ export const JobsPage: React.FC = () => {
 
           <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
             <Button onClick={() => setIsUploadOpen(false)} variant="outline" size="sm" type="button" disabled={isProcessing}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button
               variant="primary"
@@ -1003,7 +991,7 @@ export const JobsPage: React.FC = () => {
               type="submit"
               disabled={purchasedServices.length === 0 || isProcessing || !isAuthenticated}
             >
-              {isProcessing ? 'Processing...' : 'Submit Job'}
+              {isProcessing ? t('common.statuses.processing') : t('jobs.submitJob')}
             </Button>
           </div>
         </form>

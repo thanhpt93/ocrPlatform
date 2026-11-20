@@ -16,8 +16,10 @@ import { Modal } from '@/components/ui/modal';
 import { Input, Select } from '@/components/ui/form-controls';
 import { License, LicenseStatus } from '@/types';
 import { formatDate, formatNumber } from '@/utils/formatters';
+import { useTranslation } from '@/i18n';
 
 export const LicenseManagementPage: React.FC = () => {
+  const { t, dict } = useTranslation();
   const {
     licenses,
     customers,
@@ -57,6 +59,7 @@ export const LicenseManagementPage: React.FC = () => {
   }, [packages, targetPackageId]);
 
   const statuses = ['all', 'pending', 'active', 'suspended', 'expired', 'revoked'];
+  const statusesMap = dict.common.statuses as Record<string, string>;
 
   const filteredLicenses = licenses.filter((lic) => {
     const matchesStatus = statusFilter === 'all' || lic.status === statusFilter;
@@ -78,7 +81,7 @@ export const LicenseManagementPage: React.FC = () => {
   const handleGenerateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!targetCustomerId || !targetPackageId) {
-      setGenError('Please select a registered customer and package.');
+      setGenError(t('adminLicenses.selectError'));
       return;
     }
     setGenError(null);
@@ -122,11 +125,14 @@ export const LicenseManagementPage: React.FC = () => {
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <Breadcrumbs items={[{ label: 'Admin Portal', path: '/admin/dashboard' }, { label: 'License Provisioning' }]} />
-          <h1 className="text-2xl font-bold text-slate-900 mt-1 tracking-tight">License Management</h1>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Real cryptographic licenses provisioned for customer accounts, quota usage, and live status controls.
-          </p>
+          <Breadcrumbs
+            items={[
+              { label: t('common.adminPortal'), path: '/admin/dashboard' },
+              { label: t('adminLicenses.breadcrumbCurrent') },
+            ]}
+          />
+          <h1 className="text-2xl font-bold text-slate-900 mt-1 tracking-tight">{t('adminLicenses.title')}</h1>
+          <p className="text-xs text-slate-500 mt-0.5">{t('adminLicenses.subtitle')}</p>
         </div>
         <Button
           onClick={() => {
@@ -139,7 +145,7 @@ export const LicenseManagementPage: React.FC = () => {
           className="bg-amber-600 hover:bg-amber-700"
         >
           <Plus className="h-4 w-4 mr-1" />
-          Generate License
+          {t('adminLicenses.generateBtn')}
         </Button>
       </div>
 
@@ -150,11 +156,11 @@ export const LicenseManagementPage: React.FC = () => {
             <button
               key={st}
               onClick={() => setStatusFilter(st)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition-colors ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                 statusFilter === st ? 'bg-amber-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
-              {st}
+              {statusesMap[st] || st}
             </button>
           ))}
         </div>
@@ -163,7 +169,7 @@ export const LicenseManagementPage: React.FC = () => {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <input
             type="text"
-            placeholder="Search licenses or customer..."
+            placeholder={t('adminLicenses.searchPlaceholder')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full bg-slate-50 pl-9 pr-4 py-1.5 rounded-lg text-xs text-slate-800 placeholder-slate-400 border border-slate-200 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
@@ -178,21 +184,21 @@ export const LicenseManagementPage: React.FC = () => {
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 font-semibold uppercase tracking-wider">
-                  <th className="py-3 px-4">License ID</th>
-                  <th className="py-3 px-4">Masked Key (Hashed in DB)</th>
-                  <th className="py-3 px-4">Customer Account</th>
-                  <th className="py-3 px-4">OCR Service</th>
-                  <th className="py-3 px-4">Quota Used / Total</th>
-                  <th className="py-3 px-4">Expiration Date</th>
-                  <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
+                  <th className="py-3 px-4">{t('adminLicenses.colId')}</th>
+                  <th className="py-3 px-4">{t('adminLicenses.colMaskedKey')}</th>
+                  <th className="py-3 px-4">{t('adminLicenses.colCustomer')}</th>
+                  <th className="py-3 px-4">{t('adminLicenses.colService')}</th>
+                  <th className="py-3 px-4">{t('adminLicenses.colQuota')}</th>
+                  <th className="py-3 px-4">{t('adminLicenses.colExpiry')}</th>
+                  <th className="py-3 px-4">{t('common.status')}</th>
+                  <th className="py-3 px-4 text-right">{t('common.actions')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredLicenses.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="py-10 text-center text-slate-400">
-                      No licenses found matching current filters.
+                      {t('adminLicenses.empty')}
                     </td>
                   </tr>
                 ) : (
@@ -217,11 +223,11 @@ export const LicenseManagementPage: React.FC = () => {
                       </td>
                       <td className="py-3.5 px-4 text-slate-500">{formatDate(lic.expirationDate)}</td>
                       <td className="py-3.5 px-4">
-                        {lic.status === 'active' && <Badge variant="success">Active</Badge>}
-                        {lic.status === 'pending' && <Badge variant="warning">Pending</Badge>}
-                        {lic.status === 'suspended' && <Badge variant="danger">Suspended</Badge>}
-                        {lic.status === 'expired' && <Badge variant="slate">Expired</Badge>}
-                        {lic.status === 'revoked' && <Badge variant="danger">Revoked</Badge>}
+                        {lic.status === 'active' && <Badge variant="success">{t('common.statuses.active')}</Badge>}
+                        {lic.status === 'pending' && <Badge variant="warning">{t('common.statuses.pending')}</Badge>}
+                        {lic.status === 'suspended' && <Badge variant="danger">{t('common.statuses.suspended')}</Badge>}
+                        {lic.status === 'expired' && <Badge variant="slate">{t('common.statuses.expired')}</Badge>}
+                        {lic.status === 'revoked' && <Badge variant="danger">{t('common.statuses.revoked')}</Badge>}
                       </td>
                       <td className="py-3.5 px-4 text-right">
                         <div className="flex items-center justify-end gap-1.5">
@@ -233,7 +239,7 @@ export const LicenseManagementPage: React.FC = () => {
                             variant="outline"
                             size="xs"
                           >
-                            <Eye className="h-3 w-3 mr-1" /> Inspect
+                            <Eye className="h-3 w-3 mr-1" /> {t('adminLicenses.inspectBtn')}
                           </Button>
 
                           {lic.status === 'pending' && (
@@ -243,7 +249,7 @@ export const LicenseManagementPage: React.FC = () => {
                               size="xs"
                               className="text-emerald-700"
                             >
-                              Activate
+                              {t('adminLicenses.activateBtn')}
                             </Button>
                           )}
 
@@ -254,7 +260,7 @@ export const LicenseManagementPage: React.FC = () => {
                               size="xs"
                               className="text-amber-700"
                             >
-                              Suspend
+                              {t('adminLicenses.suspendBtn')}
                             </Button>
                           )}
 
@@ -265,14 +271,14 @@ export const LicenseManagementPage: React.FC = () => {
                               size="xs"
                               className="text-emerald-700"
                             >
-                              Unsuspend
+                              {t('adminLicenses.unsuspendBtn')}
                             </Button>
                           )}
 
                           {lic.status !== 'revoked' && (
                             <Button
                               onClick={() => {
-                                if (confirm(`Revoke license ${lic.maskedKey}? This will permanently invalidate client API calls.`)) {
+                                if (confirm(t('adminLicenses.revokeConfirm', { key: lic.maskedKey }))) {
                                   handleStatusChange(lic.id, 'revoked');
                                 }
                               }}
@@ -280,7 +286,7 @@ export const LicenseManagementPage: React.FC = () => {
                               size="xs"
                               className="text-red-600 hover:text-red-700"
                             >
-                              Revoke
+                              {t('adminLicenses.revokeBtn')}
                             </Button>
                           )}
                         </div>
@@ -298,8 +304,8 @@ export const LicenseManagementPage: React.FC = () => {
       <Modal
         isOpen={isGenerateOpen}
         onClose={() => setIsGenerateOpen(false)}
-        title="Complimentary License Provisioning"
-        description="Issue cryptographically signed license keys in the database for a real customer"
+        title={t('adminLicenses.genModalTitle')}
+        description={t('adminLicenses.genModalDesc')}
         maxWidth="lg"
       >
         <form onSubmit={handleGenerateSubmit} className="space-y-4">
@@ -318,7 +324,7 @@ export const LicenseManagementPage: React.FC = () => {
                 genMode === 'single' ? 'bg-white shadow-xs text-slate-900' : 'text-slate-500'
               }`}
             >
-              Single License
+              {t('adminLicenses.singleMode')}
             </button>
             <button
               type="button"
@@ -327,12 +333,12 @@ export const LicenseManagementPage: React.FC = () => {
                 genMode === 'bulk' ? 'bg-white shadow-xs text-slate-900' : 'text-slate-500'
               }`}
             >
-              Bulk Generation (Batch)
+              {t('adminLicenses.bulkMode')}
             </button>
           </div>
 
           <Select
-            label="Assign to Customer Account"
+            label={t('adminLicenses.assignCustomerLabel')}
             value={targetCustomerId}
             onChange={(e) => setTargetCustomerId(e.target.value)}
           >
@@ -344,26 +350,26 @@ export const LicenseManagementPage: React.FC = () => {
           </Select>
 
           <Select
-            label="Package Plan (Defines Service, Quota & Entitlements)"
+            label={t('adminLicenses.packagePlanLabel')}
             value={targetPackageId}
             onChange={(e) => setTargetPackageId(e.target.value)}
           >
             {packages.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.serviceName} — {p.name} ({formatNumber(p.quotaAmount)} {p.quotaType}s)
+                {p.serviceName} — {p.name} ({formatNumber(p.quotaAmount)} {p.quotaType})
               </option>
             ))}
           </Select>
 
           {selectedPkgObj && (
             <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-600 grid grid-cols-2 gap-2">
-              <div>Service: <strong className="text-slate-800">{selectedPkgObj.serviceName}</strong></div>
-              <div>Quota: <strong className="text-blue-600">{formatNumber(selectedPkgObj.quotaAmount)} {selectedPkgObj.quotaType}s</strong></div>
+              <div>{t('adminLicenses.serviceLabel')} <strong className="text-slate-800">{selectedPkgObj.serviceName}</strong></div>
+              <div>{t('marketplace.quotaLabel')} <strong className="text-blue-600">{formatNumber(selectedPkgObj.quotaAmount)} {selectedPkgObj.quotaType}</strong></div>
             </div>
           )}
 
           <Input
-            label="Audit Note"
+            label={t('adminLicenses.auditNoteLabel')}
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             required
@@ -371,7 +377,7 @@ export const LicenseManagementPage: React.FC = () => {
 
           {genMode === 'bulk' && (
             <Input
-              label="Number of Licenses to Generate"
+              label={t('adminLicenses.bulkCountLabel')}
               type="number"
               min={2}
               max={20}
@@ -383,10 +389,10 @@ export const LicenseManagementPage: React.FC = () => {
 
           <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
             <Button type="button" onClick={() => setIsGenerateOpen(false)} variant="outline" size="sm">
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button type="submit" disabled={submitting} variant="primary" size="sm" className="bg-amber-600 hover:bg-amber-700">
-              {submitting ? 'Provisioning...' : 'Generate & Provision'}
+              {submitting ? t('adminLicenses.provisioning') : t('adminLicenses.generateSubmit')}
             </Button>
           </div>
         </form>
@@ -396,8 +402,8 @@ export const LicenseManagementPage: React.FC = () => {
       <Modal
         isOpen={generatedKeysResult.length > 0}
         onClose={() => setGeneratedKeysResult([])}
-        title="License Key(s) Provisioned"
-        description="Save these raw keys now. Only SHA-256 hashes are stored in the database."
+        title={t('adminLicenses.provisionedTitle')}
+        description={t('adminLicenses.provisionedDesc')}
         maxWidth="lg"
       >
         <div className="space-y-3 text-xs">
@@ -414,7 +420,7 @@ export const LicenseManagementPage: React.FC = () => {
           ))}
           <div className="flex justify-end pt-2">
             <Button onClick={() => setGeneratedKeysResult([])} variant="primary" size="sm" className="bg-amber-600 hover:bg-amber-700">
-              Done
+              {t('common.done')}
             </Button>
           </div>
         </div>
@@ -425,20 +431,22 @@ export const LicenseManagementPage: React.FC = () => {
         <Modal
           isOpen={isDetailOpen}
           onClose={() => setIsDetailOpen(false)}
-          title={`License Details: ${selectedLicense.id}`}
-          description="Authorization parameters and real lifecycle history"
+          title={t('adminLicenses.detailTitle', { id: selectedLicense.id })}
+          description={t('adminLicenses.detailDesc')}
           maxWidth="lg"
         >
           <div className="space-y-4 text-xs">
             <div className="p-3 bg-slate-900 text-white rounded-lg flex items-center justify-between font-mono">
               <div>
-                <span className="text-[10px] text-slate-400 uppercase tracking-wider block">Masked Key (Secret Hash Protected)</span>
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider block">
+                  {t('adminLicenses.maskedKeyProtected')}
+                </span>
                 <span className="text-amber-400 font-semibold">{selectedLicense.maskedKey}</span>
               </div>
               <button
                 onClick={() => handleCopyKey(selectedLicense.maskedKey, 'admin-modal')}
                 className="p-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300"
-                title="Copy masked key"
+                title={t('licenses.copyFullKey')}
               >
                 {copiedKey === 'admin-modal' ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
               </button>
@@ -446,38 +454,40 @@ export const LicenseManagementPage: React.FC = () => {
 
             <div className="grid grid-cols-2 gap-3 p-4 bg-slate-50 rounded-xl border border-slate-200">
               <div>
-                <span className="text-slate-400 block">Customer:</span>
+                <span className="text-slate-400 block">{t('adminLicenses.customerLabel')}</span>
                 <span className="font-semibold text-slate-800">{selectedLicense.customerName}</span>
               </div>
               <div>
-                <span className="text-slate-400 block">Service:</span>
+                <span className="text-slate-400 block">{t('adminLicenses.serviceLabel')}</span>
                 <span className="font-semibold text-slate-800">{selectedLicense.serviceName}</span>
               </div>
               <div>
-                <span className="text-slate-400 block">Quota Usage:</span>
+                <span className="text-slate-400 block">{t('adminLicenses.quotaUsageLabel')}</span>
                 <span className="font-semibold text-blue-600">
                   {formatNumber(selectedLicense.usedQuota)} / {formatNumber(selectedLicense.quota)}
                 </span>
               </div>
               <div>
-                <span className="text-slate-400 block">Status:</span>
-                <span className="font-semibold capitalize text-slate-800">{selectedLicense.status}</span>
+                <span className="text-slate-400 block">{t('adminLicenses.statusLabel')}</span>
+                <span className="font-semibold text-slate-800">
+                  {statusesMap[selectedLicense.status] || selectedLicense.status}
+                </span>
               </div>
               <div>
-                <span className="text-slate-400 block">Issued Date:</span>
+                <span className="text-slate-400 block">{t('adminLicenses.issuedDateLabel')}</span>
                 <span className="font-semibold text-slate-800">{formatDate(selectedLicense.startDate)}</span>
               </div>
               <div>
-                <span className="text-slate-400 block">Expires:</span>
+                <span className="text-slate-400 block">{t('adminLicenses.expiresLabel')}</span>
                 <span className="font-semibold text-slate-800">{formatDate(selectedLicense.expirationDate)}</span>
               </div>
             </div>
 
             <div>
-              <h4 className="font-bold text-slate-800 mb-2">Lifecycle History</h4>
+              <h4 className="font-bold text-slate-800 mb-2">{t('adminLicenses.lifecycleHistory')}</h4>
               <div className="space-y-2 border border-slate-200 rounded-lg p-3 bg-white max-h-56 overflow-y-auto">
                 {selectedLicense.history.length === 0 ? (
-                  <p className="text-slate-400 text-center py-2">No lifecycle events logged.</p>
+                  <p className="text-slate-400 text-center py-2">{t('adminLicenses.noLifecycleEvents')}</p>
                 ) : selectedLicense.history.map((h) => (
                   <div key={h.id} className="text-xs border-b border-slate-100 last:border-0 pb-2 last:pb-0">
                     <div className="flex justify-between text-slate-500 text-[11px]">
@@ -485,7 +495,7 @@ export const LicenseManagementPage: React.FC = () => {
                       <span>{h.timestamp}</span>
                     </div>
                     <p className="text-slate-600 mt-0.5">{h.notes}</p>
-                    <span className="text-[10px] text-slate-400 font-medium">Actor ID: {h.actor}</span>
+                    <span className="text-[10px] text-slate-400 font-medium">{t('common.actor')}: {h.actor}</span>
                   </div>
                 ))}
               </div>
@@ -493,7 +503,7 @@ export const LicenseManagementPage: React.FC = () => {
 
             <div className="flex justify-end pt-2">
               <Button onClick={() => setIsDetailOpen(false)} variant="primary" size="sm" className="bg-amber-600 hover:bg-amber-700">
-                Close
+                {t('common.close')}
               </Button>
             </div>
           </div>

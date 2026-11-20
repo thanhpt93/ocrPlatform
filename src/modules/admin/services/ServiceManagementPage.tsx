@@ -1,29 +1,24 @@
 import React, { useState } from 'react';
 import {
-  Layers,
   Plus,
   Search,
   Edit2,
   Trash2,
-  CheckCircle2,
-  Eye,
-  FileCode,
-  Globe,
-  Star,
-  ExternalLink,
 } from 'lucide-react';
 import { usePlatformStore } from '@/stores/usePlatformStore';
 import { Breadcrumbs } from '@/components/common/Breadcrumbs';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { Input, Select, Textarea } from '@/components/ui/form-controls';
 import { OCRService, ProcessingMode, ServiceStatus } from '@/types';
 import { formatCurrency } from '@/utils/formatters';
+import { useTranslation } from '@/i18n';
 
 export const ServiceManagementPage: React.FC = () => {
-  const { services, docTypes, addService, updateService, deleteService, setServiceStatus } = usePlatformStore();
+  const { t, dict } = useTranslation();
+  const { services, docTypes, addService, updateService, deleteService } = usePlatformStore();
 
   const [search, setSearch] = useState('');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
@@ -47,6 +42,10 @@ export const ServiceManagementPage: React.FC = () => {
   const [status, setStatus] = useState<ServiceStatus>('published');
   const [startingPrice, setStartingPrice] = useState(49);
   const [sla, setSla] = useState('99.9% Uptime');
+
+  const categoriesMap = dict.common.categories as Record<string, string>;
+  const modesMap = dict.common.processingModes as Record<string, string>;
+  const statusesMap = dict.common.statuses as Record<string, string>;
 
   const filteredServices = services.filter((s) => {
     const matchesSearch =
@@ -145,15 +144,18 @@ export const ServiceManagementPage: React.FC = () => {
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <Breadcrumbs items={[{ label: 'Admin Portal', path: '/admin/dashboard' }, { label: 'OCR Services' }]} />
-          <h1 className="text-2xl font-bold text-slate-900 mt-1 tracking-tight">OCR Service Management</h1>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Configure AI model catalog, inference endpoints, capabilities, and document associations.
-          </p>
+          <Breadcrumbs
+            items={[
+              { label: t('common.adminPortal'), path: '/admin/dashboard' },
+              { label: t('adminServices.breadcrumbCurrent') },
+            ]}
+          />
+          <h1 className="text-2xl font-bold text-slate-900 mt-1 tracking-tight">{t('adminServices.title')}</h1>
+          <p className="text-xs text-slate-500 mt-0.5">{t('adminServices.subtitle')}</p>
         </div>
         <Button onClick={handleOpenCreate} variant="primary" size="sm" className="bg-amber-600 hover:bg-amber-700">
           <Plus className="h-4 w-4 mr-1" />
-          Create New OCR Service
+          {t('adminServices.createBtn')}
         </Button>
       </div>
 
@@ -164,11 +166,11 @@ export const ServiceManagementPage: React.FC = () => {
             <button
               key={st}
               onClick={() => setSelectedStatus(st)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition-colors ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                 selectedStatus === st ? 'bg-amber-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
-              {st}
+              {statusesMap[st] || st}
             </button>
           ))}
         </div>
@@ -177,7 +179,7 @@ export const ServiceManagementPage: React.FC = () => {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <input
             type="text"
-            placeholder="Search service name, code..."
+            placeholder={t('adminServices.searchPlaceholder')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full bg-slate-50 pl-9 pr-4 py-1.5 rounded-lg text-xs text-slate-800 placeholder-slate-400 border border-slate-200 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
@@ -192,14 +194,14 @@ export const ServiceManagementPage: React.FC = () => {
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 font-semibold uppercase tracking-wider">
-                  <th className="py-3 px-4">Order</th>
-                  <th className="py-3 px-4">Service</th>
-                  <th className="py-3 px-4">Category</th>
-                  <th className="py-3 px-4">Mode</th>
-                  <th className="py-3 px-4">Supported Docs</th>
-                  <th className="py-3 px-4">Starting Price</th>
-                  <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
+                  <th className="py-3 px-4">{t('adminServices.colOrder')}</th>
+                  <th className="py-3 px-4">{t('adminServices.colService')}</th>
+                  <th className="py-3 px-4">{t('adminServices.colCategory')}</th>
+                  <th className="py-3 px-4">{t('adminServices.colMode')}</th>
+                  <th className="py-3 px-4">{t('adminServices.colSupportedDocs')}</th>
+                  <th className="py-3 px-4">{t('adminServices.colStartingPrice')}</th>
+                  <th className="py-3 px-4">{t('common.status')}</th>
+                  <th className="py-3 px-4 text-right">{t('common.actions')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -215,25 +217,31 @@ export const ServiceManagementPage: React.FC = () => {
                         </div>
                       </div>
                     </td>
-                    <td className="py-3.5 px-4 font-medium text-slate-700">{srv.category}</td>
-                    <td className="py-3.5 px-4 capitalize text-slate-600">{srv.processingMode}</td>
-                    <td className="py-3.5 px-4 text-slate-600 font-medium">
-                      {srv.supportedDocTypeIds.length} document types
+                    <td className="py-3.5 px-4 font-medium text-slate-700">
+                      {categoriesMap[srv.category] || srv.category}
                     </td>
-                    <td className="py-3.5 px-4 font-bold text-slate-900">{formatCurrency(srv.startingPrice)}/mo</td>
+                    <td className="py-3.5 px-4 text-slate-600">
+                      {modesMap[srv.processingMode] || srv.processingMode}
+                    </td>
+                    <td className="py-3.5 px-4 text-slate-600 font-medium">
+                      {t('adminServices.docTypesCount', { count: srv.supportedDocTypeIds.length })}
+                    </td>
+                    <td className="py-3.5 px-4 font-bold text-slate-900">
+                      {formatCurrency(srv.startingPrice)}{t('common.perMonth')}
+                    </td>
                     <td className="py-3.5 px-4">
-                      {srv.status === 'published' && <Badge variant="success">Published</Badge>}
-                      {srv.status === 'draft' && <Badge variant="warning">Draft</Badge>}
-                      {srv.status === 'archived' && <Badge variant="slate">Archived</Badge>}
+                      {srv.status === 'published' && <Badge variant="success">{t('common.statuses.published')}</Badge>}
+                      {srv.status === 'draft' && <Badge variant="warning">{t('common.statuses.draft')}</Badge>}
+                      {srv.status === 'archived' && <Badge variant="slate">{t('common.statuses.archived')}</Badge>}
                     </td>
                     <td className="py-3.5 px-4 text-right">
                       <div className="flex items-center justify-end gap-1.5">
                         <Button onClick={() => handleOpenEdit(srv)} variant="outline" size="xs">
-                          <Edit2 className="h-3 w-3 mr-1" /> Edit
+                          <Edit2 className="h-3 w-3 mr-1" /> {t('common.edit')}
                         </Button>
                         <Button
                           onClick={async () => {
-                            if (confirm(`Are you sure you want to delete ${srv.name}?`)) {
+                            if (confirm(t('adminServices.deleteConfirm', { name: srv.name }))) {
                               await deleteService(srv.id);
                             }
                           }}
@@ -257,8 +265,12 @@ export const ServiceManagementPage: React.FC = () => {
       <Modal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        title={editingService ? `Edit Service: ${editingService.name}` : 'Create New OCR Service'}
-        description="Configure service catalog metadata, extraction features, and formats"
+        title={
+          editingService
+            ? t('adminServices.editTitle', { name: editingService.name })
+            : t('adminServices.createTitle')
+        }
+        description={t('adminServices.modalDesc')}
         maxWidth="2xl"
       >
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -269,59 +281,59 @@ export const ServiceManagementPage: React.FC = () => {
           )}
           <div className="grid grid-cols-2 gap-3">
             <Input
-              label="Service Code"
+              label={t('adminServices.codeLabel')}
               value={code}
               onChange={(e) => setCode(e.target.value)}
               required
               hint="e.g. OCR-INV"
             />
             <Input
-              label="Service Name"
+              label={t('adminServices.nameLabel')}
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
               placeholder="e.g. Smart Invoice OCR"
             />
             <Select
-              label="Category"
+              label={t('adminServices.categoryLabel')}
               value={category}
               onChange={(e) => setCategory(e.target.value)}
             >
-              <option value="Financial">Financial</option>
-              <option value="Legal">Legal</option>
-              <option value="Identity">Identity</option>
-              <option value="Structured Data">Structured Data</option>
-              <option value="General">General</option>
+              <option value="Financial">{t('common.categories.Financial')}</option>
+              <option value="Legal">{t('common.categories.Legal')}</option>
+              <option value="Identity">{t('common.categories.Identity')}</option>
+              <option value="Structured Data">{t('common.categories.Structured Data')}</option>
+              <option value="General">{t('common.categories.General')}</option>
             </Select>
             <Select
-              label="Processing Mode"
+              label={t('adminServices.processingModeLabel')}
               value={processingMode}
               onChange={(e) => setProcessingMode(e.target.value as ProcessingMode)}
             >
-              <option value="synchronous">Synchronous (Real-time sub-second)</option>
-              <option value="asynchronous">Asynchronous (Job Polling / Webhook)</option>
-              <option value="batch">Batch (High-volume background queue)</option>
+              <option value="synchronous">{t('adminServices.modeSyncOption')}</option>
+              <option value="asynchronous">{t('adminServices.modeAsyncOption')}</option>
+              <option value="batch">{t('adminServices.modeBatchOption')}</option>
             </Select>
             <Input
-              label="Starting Monthly Price ($)"
+              label={t('adminServices.startingPriceLabel')}
               type="number"
               value={startingPrice}
               onChange={(e) => setStartingPrice(Number(e.target.value))}
               required
             />
             <Select
-              label="Publishing Status"
+              label={t('adminServices.publishingStatusLabel')}
               value={status}
               onChange={(e) => setStatus(e.target.value as ServiceStatus)}
             >
-              <option value="published">Published (Active in Marketplace)</option>
-              <option value="draft">Draft (Admin Only)</option>
-              <option value="archived">Archived (Deprecated)</option>
+              <option value="published">{t('adminServices.statusPubOption')}</option>
+              <option value="draft">{t('adminServices.statusDraftOption')}</option>
+              <option value="archived">{t('adminServices.statusArchOption')}</option>
             </Select>
           </div>
 
           <Input
-            label="Thumbnail Image URL"
+            label={t('adminServices.thumbnailLabel')}
             value={thumbnail}
             onChange={(e) => setThumbnail(e.target.value)}
             placeholder="https://..."
@@ -329,7 +341,7 @@ export const ServiceManagementPage: React.FC = () => {
           />
 
           <Textarea
-            label="Short Description"
+            label={t('adminServices.shortDescLabel')}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={2}
@@ -338,21 +350,21 @@ export const ServiceManagementPage: React.FC = () => {
 
           <div className="grid grid-cols-2 gap-3">
             <Input
-              label="Supported File Formats (comma separated)"
+              label={t('adminServices.formatsLabel')}
               value={supportedFileFormats}
               onChange={(e) => setSupportedFileFormats(e.target.value)}
               hint="e.g. PDF, PNG, JPG, TIFF"
             />
             <Input
-              label="Supported Languages (comma separated)"
+              label={t('adminServices.languagesLabel')}
               value={supportedLanguages}
               onChange={(e) => setSupportedLanguages(e.target.value)}
-              hint="e.g. English, Vietnamese, Japanese"
+              hint="e.g. English, Vietnamese, Korean"
             />
           </div>
 
           <Input
-            label="OCR Capabilities (comma separated)"
+            label={t('adminServices.capabilitiesLabel')}
             value={capabilities}
             onChange={(e) => setCapabilities(e.target.value)}
             hint="e.g. Table Extraction, Layout Analysis, Barcode Detection"
@@ -361,7 +373,7 @@ export const ServiceManagementPage: React.FC = () => {
           {/* Supported Document Types Multi-select Checkboxes */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-              Associated Document Types
+              {t('adminServices.associatedDocsLabel')}
             </label>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 p-3 bg-slate-50 border border-slate-200 rounded-lg max-h-40 overflow-y-auto">
               {docTypes.map((doc) => (
@@ -380,10 +392,10 @@ export const ServiceManagementPage: React.FC = () => {
 
           <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
             <Button type="button" onClick={() => setIsModalOpen(false)} variant="outline" size="sm">
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button type="submit" disabled={submitting} variant="primary" size="sm" className="bg-amber-600 hover:bg-amber-700">
-              {submitting ? 'Saving...' : editingService ? 'Save Changes' : 'Create Service'}
+              {submitting ? t('common.saving') : editingService ? t('common.saveChanges') : t('adminServices.createSubmit')}
             </Button>
           </div>
         </form>

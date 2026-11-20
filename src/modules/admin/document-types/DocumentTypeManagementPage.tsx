@@ -1,13 +1,9 @@
 import React, { useState } from 'react';
 import {
-  FileCode,
   Plus,
   Search,
   Edit2,
   Trash2,
-  CheckCircle2,
-  Layers,
-  Image as ImageIcon,
 } from 'lucide-react';
 import { usePlatformStore } from '@/stores/usePlatformStore';
 import { Breadcrumbs } from '@/components/common/Breadcrumbs';
@@ -17,8 +13,10 @@ import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { Input, Select, Textarea } from '@/components/ui/form-controls';
 import { DocumentType, DocTypeCategory } from '@/types';
+import { useTranslation } from '@/i18n';
 
 export const DocumentTypeManagementPage: React.FC = () => {
+  const { t, dict } = useTranslation();
   const { docTypes, services, addDocType, updateDocType, deleteDocType } = usePlatformStore();
 
   const [search, setSearch] = useState('');
@@ -36,6 +34,7 @@ export const DocumentTypeManagementPage: React.FC = () => {
   const [status, setStatus] = useState<'active' | 'inactive'>('active');
 
   const categories = ['All', 'Financial', 'Legal', 'Identity', 'Logistics', 'Healthcare', 'General'];
+  const categoriesMap = dict.common.categories as Record<string, string>;
 
   const filteredDocTypes = docTypes.filter((d) => {
     const matchesCategory = selectedCategory === 'All' || d.category === selectedCategory;
@@ -103,15 +102,18 @@ export const DocumentTypeManagementPage: React.FC = () => {
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <Breadcrumbs items={[{ label: 'Admin Portal', path: '/admin/dashboard' }, { label: 'Document Types' }]} />
-          <h1 className="text-2xl font-bold text-slate-900 mt-1 tracking-tight">Document Type Definitions</h1>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Manage document schema taxonomy and associate documents with multiple OCR microservices.
-          </p>
+          <Breadcrumbs
+            items={[
+              { label: t('common.adminPortal'), path: '/admin/dashboard' },
+              { label: t('adminDocTypes.breadcrumbCurrent') },
+            ]}
+          />
+          <h1 className="text-2xl font-bold text-slate-900 mt-1 tracking-tight">{t('adminDocTypes.title')}</h1>
+          <p className="text-xs text-slate-500 mt-0.5">{t('adminDocTypes.subtitle')}</p>
         </div>
         <Button onClick={handleOpenCreate} variant="primary" size="sm" className="bg-amber-600 hover:bg-amber-700">
           <Plus className="h-4 w-4 mr-1" />
-          Create Document Type
+          {t('adminDocTypes.createBtn')}
         </Button>
       </div>
 
@@ -126,7 +128,7 @@ export const DocumentTypeManagementPage: React.FC = () => {
                 selectedCategory === cat ? 'bg-amber-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
-              {cat}
+              {categoriesMap[cat] || cat}
             </button>
           ))}
         </div>
@@ -135,7 +137,7 @@ export const DocumentTypeManagementPage: React.FC = () => {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <input
             type="text"
-            placeholder="Search document types..."
+            placeholder={t('adminDocTypes.searchPlaceholder')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full bg-slate-50 pl-9 pr-4 py-1.5 rounded-lg text-xs text-slate-800 placeholder-slate-400 border border-slate-200 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
@@ -150,12 +152,12 @@ export const DocumentTypeManagementPage: React.FC = () => {
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 font-semibold uppercase tracking-wider">
-                  <th className="py-3 px-4">Code</th>
-                  <th className="py-3 px-4">Document Type Name</th>
-                  <th className="py-3 px-4">Category</th>
-                  <th className="py-3 px-4">Associated OCR Services</th>
-                  <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
+                  <th className="py-3 px-4">{t('adminDocTypes.colCode')}</th>
+                  <th className="py-3 px-4">{t('adminDocTypes.colName')}</th>
+                  <th className="py-3 px-4">{t('adminDocTypes.colCategory')}</th>
+                  <th className="py-3 px-4">{t('adminDocTypes.colAssociatedServices')}</th>
+                  <th className="py-3 px-4">{t('common.status')}</th>
+                  <th className="py-3 px-4 text-right">{t('common.actions')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -170,7 +172,9 @@ export const DocumentTypeManagementPage: React.FC = () => {
                         <div className="text-[11px] text-slate-500 truncate max-w-sm">{doc.description}</div>
                       </td>
                       <td className="py-3.5 px-4">
-                        <Badge variant="default" size="sm">{doc.category}</Badge>
+                        <Badge variant="default" size="sm">
+                          {categoriesMap[doc.category] || doc.category}
+                        </Badge>
                       </td>
                       <td className="py-3.5 px-4">
                         <div className="flex flex-wrap gap-1">
@@ -186,19 +190,19 @@ export const DocumentTypeManagementPage: React.FC = () => {
                       </td>
                       <td className="py-3.5 px-4">
                         {doc.status === 'active' ? (
-                          <Badge variant="success">Active</Badge>
+                          <Badge variant="success">{t('common.statuses.active')}</Badge>
                         ) : (
-                          <Badge variant="slate">Inactive</Badge>
+                          <Badge variant="slate">{t('common.statuses.inactive')}</Badge>
                         )}
                       </td>
                       <td className="py-3.5 px-4 text-right">
                         <div className="flex items-center justify-end gap-1.5">
                           <Button onClick={() => handleOpenEdit(doc)} variant="outline" size="xs">
-                            <Edit2 className="h-3 w-3 mr-1" /> Edit
+                            <Edit2 className="h-3 w-3 mr-1" /> {t('common.edit')}
                           </Button>
                           <Button
                             onClick={() => {
-                              if (confirm(`Delete document type ${doc.name}?`)) {
+                              if (confirm(t('adminDocTypes.deleteConfirm', { name: doc.name }))) {
                                 deleteDocType(doc.id);
                               }
                             }}
@@ -223,35 +227,39 @@ export const DocumentTypeManagementPage: React.FC = () => {
       <Modal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        title={editingDocType ? `Edit Document Type: ${editingDocType.name}` : 'Create Document Type'}
-        description="Define document taxonomy and multi-service routing"
+        title={
+          editingDocType
+            ? t('adminDocTypes.editTitle', { name: editingDocType.name })
+            : t('adminDocTypes.createTitle')
+        }
+        description={t('adminDocTypes.modalDesc')}
         maxWidth="lg"
       >
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <Input
-              label="Document Type Code"
+              label={t('adminDocTypes.codeLabel')}
               value={code}
               onChange={(e) => setCode(e.target.value)}
               required
               hint="e.g. DOC-TAX-INV"
             />
             <Select
-              label="Document Category"
+              label={t('adminDocTypes.categoryLabel')}
               value={category}
               onChange={(e) => setCategory(e.target.value as DocTypeCategory)}
             >
-              <option value="Financial">Financial</option>
-              <option value="Legal">Legal</option>
-              <option value="Identity">Identity</option>
-              <option value="Logistics">Logistics</option>
-              <option value="Healthcare">Healthcare</option>
-              <option value="General">General</option>
+              <option value="Financial">{t('common.categories.Financial')}</option>
+              <option value="Legal">{t('common.categories.Legal')}</option>
+              <option value="Identity">{t('common.categories.Identity')}</option>
+              <option value="Logistics">{t('common.categories.Logistics')}</option>
+              <option value="Healthcare">{t('common.categories.Healthcare')}</option>
+              <option value="General">{t('common.categories.General')}</option>
             </Select>
           </div>
 
           <Input
-            label="Document Type Name"
+            label={t('adminDocTypes.nameLabel')}
             value={name}
             onChange={(e) => setName(e.target.value)}
             required
@@ -259,7 +267,7 @@ export const DocumentTypeManagementPage: React.FC = () => {
           />
 
           <Textarea
-            label="Description"
+            label={t('adminDocTypes.descLabel')}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={2}
@@ -267,7 +275,7 @@ export const DocumentTypeManagementPage: React.FC = () => {
           />
 
           <Input
-            label="Example Specimen Image URL"
+            label={t('adminDocTypes.exampleImgLabel')}
             value={exampleImage}
             onChange={(e) => setExampleImage(e.target.value)}
             placeholder="https://..."
@@ -276,7 +284,7 @@ export const DocumentTypeManagementPage: React.FC = () => {
           {/* Supported OCR Services Multi-select */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-              Supported by OCR Microservices (Multiple selection allowed)
+              {t('adminDocTypes.supportedServicesLabel')}
             </label>
             <div className="space-y-2 p-3 bg-slate-50 border border-slate-200 rounded-lg max-h-48 overflow-y-auto">
               {services.map((s) => (
@@ -295,20 +303,20 @@ export const DocumentTypeManagementPage: React.FC = () => {
           </div>
 
           <Select
-            label="Status"
+            label={t('common.status')}
             value={status}
             onChange={(e) => setStatus(e.target.value as any)}
           >
-            <option value="active">Active (Available for API Routing)</option>
-            <option value="inactive">Inactive</option>
+            <option value="active">{t('adminDocTypes.statusActiveOpt')}</option>
+            <option value="inactive">{t('adminDocTypes.statusInactiveOpt')}</option>
           </Select>
 
           <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
             <Button type="button" onClick={() => setIsModalOpen(false)} variant="outline" size="sm">
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button type="submit" variant="primary" size="sm" className="bg-amber-600 hover:bg-amber-700">
-              {editingDocType ? 'Save Changes' : 'Create Document Type'}
+              {editingDocType ? t('common.saveChanges') : t('adminDocTypes.createSubmit')}
             </Button>
           </div>
         </form>

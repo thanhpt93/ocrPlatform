@@ -32,10 +32,12 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { formatNumber, formatCurrency } from '@/utils/formatters';
+import { useTranslation } from '@/i18n';
 
 const PIE_COLORS = ['#f59e0b', '#3b82f6', '#10b981', '#8b5cf6', '#ec4899', '#06b6d4'];
 
 export const AdminDashboard: React.FC = () => {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const {
     adminDashboard,
@@ -73,19 +75,24 @@ export const AdminDashboard: React.FC = () => {
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <Breadcrumbs items={[{ label: 'Admin Portal', path: '/admin/dashboard' }, { label: 'Platform Dashboard' }]} />
-          <h1 className="text-2xl font-bold text-slate-900 mt-1 tracking-tight">Platform Control Center</h1>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Live multi-tenant KPIs, registered customer accounts, real OCR usage, and verified order revenue.
-          </p>
+          <Breadcrumbs
+            items={[
+              { label: t('common.adminPortal'), path: '/admin/dashboard' },
+              { label: t('adminDashboard.breadcrumbCurrent') },
+            ]}
+          />
+          <h1 className="text-2xl font-bold text-slate-900 mt-1 tracking-tight">
+            {t('adminDashboard.title')}
+          </h1>
+          <p className="text-xs text-slate-500 mt-0.5">{t('adminDashboard.subtitle')}</p>
         </div>
         <div className="flex items-center gap-3">
           <Button onClick={() => navigate('/admin/monitoring')} variant="outline" size="sm">
             <Activity className="h-4 w-4 mr-1 text-amber-600" />
-            Inference Telemetry
+            {t('adminDashboard.inferenceTelemetry')}
           </Button>
           <Button onClick={() => navigate('/admin/services')} variant="primary" size="sm" className="bg-amber-600 hover:bg-amber-700">
-            Manage OCR Catalog
+            {t('adminDashboard.manageCatalog')}
           </Button>
         </div>
       </div>
@@ -93,44 +100,44 @@ export const AdminDashboard: React.FC = () => {
       {/* Primary KPI Grid (6 Cards - 100% real database counts) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         <StatCard
-          title="Registered Customers"
+          title={t('adminDashboard.kpi.registeredCustomers')}
           value={totalCustomers}
-          subtitle="Real customer accounts"
+          subtitle={t('adminDashboard.kpi.realAccounts')}
           icon={<Users className="h-5 w-5" />}
           iconBgColor="bg-blue-50 text-blue-600"
         />
         <StatCard
-          title="Published Services"
+          title={t('adminDashboard.kpi.publishedServices')}
           value={`${activeServices} / ${totalServices}`}
-          subtitle="Active OCR catalog"
+          subtitle={t('adminDashboard.kpi.activeCatalog')}
           icon={<Layers className="h-5 w-5" />}
           iconBgColor="bg-amber-50 text-amber-600"
         />
         <StatCard
-          title="Active Subscriptions"
+          title={t('adminDashboard.kpi.activeSubscriptions')}
           value={activeSubs}
-          subtitle="Live customer plans"
+          subtitle={t('adminDashboard.kpi.livePlans')}
           icon={<CreditCard className="h-5 w-5" />}
           iconBgColor="bg-indigo-50 text-indigo-600"
         />
         <StatCard
-          title="Active Licenses"
+          title={t('adminDashboard.kpi.activeLicenses')}
           value={activeLicenses}
-          subtitle="Provisioned keys"
+          subtitle={t('adminDashboard.kpi.provisionedKeys')}
           icon={<KeyRound className="h-5 w-5" />}
           iconBgColor="bg-emerald-50 text-emerald-600"
         />
         <StatCard
-          title="OCR Units Processed"
+          title={t('adminDashboard.kpi.unitsProcessed')}
           value={formatNumber(totalUsageUnits)}
-          subtitle={`${formatNumber(totalOcrJobs)} recorded runs`}
+          subtitle={t('adminDashboard.kpi.recordedRuns', { count: formatNumber(totalOcrJobs) })}
           icon={<FileText className="h-5 w-5" />}
           iconBgColor="bg-purple-50 text-purple-600"
         />
         <StatCard
-          title="Collected Revenue"
+          title={t('adminDashboard.kpi.collectedRevenue')}
           value={formatCurrency(totalRevenue)}
-          subtitle="Completed orders"
+          subtitle={t('adminDashboard.kpi.completedOrders')}
           icon={<DollarSign className="h-5 w-5" />}
           iconBgColor="bg-emerald-50 text-emerald-600"
         />
@@ -142,11 +149,11 @@ export const AdminDashboard: React.FC = () => {
         <Card className="lg:col-span-2">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <div>
-              <CardTitle>Monthly Platform Revenue (USD)</CardTitle>
-              <CardDescription>Completed orders over the last 6 months</CardDescription>
+              <CardTitle>{t('adminDashboard.monthlyRevenueTitle')}</CardTitle>
+              <CardDescription>{t('adminDashboard.monthlyRevenueDesc')}</CardDescription>
             </div>
             <Badge variant="default" size="sm">
-              Total: {formatCurrency(totalRevenue)}
+              {t('adminDashboard.totalBadge', { amount: formatCurrency(totalRevenue) })}
             </Badge>
           </CardHeader>
           <CardContent>
@@ -161,12 +168,12 @@ export const AdminDashboard: React.FC = () => {
                       formatter={(val: any) => formatCurrency(Number(val))}
                       contentStyle={{ backgroundColor: '#0f172a', borderRadius: '8px', color: '#fff', fontSize: '12px' }}
                     />
-                    <Bar dataKey="revenue" name="Revenue ($)" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="revenue" name={t('adminDashboard.revenueSeries')} fill="#f59e0b" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
                 <div className="h-full flex items-center justify-center text-xs text-slate-400">
-                  No completed order revenue recorded yet.
+                  {t('adminDashboard.noRevenueYet')}
                 </div>
               )}
             </div>
@@ -176,8 +183,8 @@ export const AdminDashboard: React.FC = () => {
         {/* Service Popularity Pie Chart */}
         <Card>
           <CardHeader>
-            <CardTitle>Service Utilization</CardTitle>
-            <CardDescription>Share by real OCR usage & active subscriptions</CardDescription>
+            <CardTitle>{t('adminDashboard.serviceUtilTitle')}</CardTitle>
+            <CardDescription>{t('adminDashboard.serviceUtilDesc')}</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col items-center justify-center">
             {servicePopularity.length > 0 ? (
@@ -205,7 +212,11 @@ export const AdminDashboard: React.FC = () => {
                         <span className="text-slate-600 truncate">{s.name}</span>
                       </div>
                       <span className="font-semibold text-slate-800 shrink-0">
-                        {s.percentage}% ({s.usage_units} units / {s.subscriptions} subs)
+                        {t('adminDashboard.serviceShareSummary', {
+                          pct: s.percentage,
+                          units: s.usage_units,
+                          subs: s.subscriptions,
+                        })}
                       </span>
                     </div>
                   ))}
@@ -213,7 +224,7 @@ export const AdminDashboard: React.FC = () => {
               </>
             ) : (
               <div className="h-52 flex items-center justify-center text-xs text-slate-400 text-center">
-                No customer subscriptions or OCR usage recorded yet.
+                {t('adminDashboard.noServiceUtilYet')}
               </div>
             )}
           </CardContent>
@@ -225,8 +236,8 @@ export const AdminDashboard: React.FC = () => {
         {/* OCR Processing Volume 30-Day Trend */}
         <Card>
           <CardHeader>
-            <CardTitle>OCR Processing Volume (Last 30 Days)</CardTitle>
-            <CardDescription>Real daily units recorded across customer licenses</CardDescription>
+            <CardTitle>{t('adminDashboard.volume30dTitle')}</CardTitle>
+            <CardDescription>{t('adminDashboard.volume30dDesc')}</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="h-64 w-full pt-2">
@@ -245,12 +256,19 @@ export const AdminDashboard: React.FC = () => {
                     <Tooltip
                       contentStyle={{ backgroundColor: '#0f172a', borderRadius: '8px', color: '#fff', fontSize: '12px' }}
                     />
-                    <Area type="monotone" dataKey="pages" name="Units Processed" stroke="#3b82f6" strokeWidth={2} fill="url(#adminVolumeGrad)" />
+                    <Area
+                      type="monotone"
+                      dataKey="pages"
+                      name={t('adminDashboard.unitsProcessedName')}
+                      stroke="#3b82f6"
+                      strokeWidth={2}
+                      fill="url(#adminVolumeGrad)"
+                    />
                   </AreaChart>
                 </ResponsiveContainer>
               ) : (
                 <div className="h-full flex items-center justify-center text-xs text-slate-400">
-                  No usage history recorded yet.
+                  {t('adminDashboard.noUsageHistoryYet')}
                 </div>
               )}
             </div>
@@ -260,8 +278,8 @@ export const AdminDashboard: React.FC = () => {
         {/* Customer Growth Line Chart */}
         <Card>
           <CardHeader>
-            <CardTitle>Registered Customer Growth</CardTitle>
-            <CardDescription>Cumulative real customer accounts over the last 6 months</CardDescription>
+            <CardTitle>{t('adminDashboard.customerGrowthTitle')}</CardTitle>
+            <CardDescription>{t('adminDashboard.customerGrowthDesc')}</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="h-64 w-full pt-2">
@@ -274,13 +292,27 @@ export const AdminDashboard: React.FC = () => {
                     <Tooltip
                       contentStyle={{ backgroundColor: '#0f172a', borderRadius: '8px', color: '#fff', fontSize: '12px' }}
                     />
-                    <Line type="monotone" dataKey="total" name="Total Customers" stroke="#10b981" strokeWidth={2.5} dot={{ r: 4 }} />
-                    <Line type="monotone" dataKey="new_customers" name="New Registrations" stroke="#f59e0b" strokeWidth={2} strokeDasharray="4 4" />
+                    <Line
+                      type="monotone"
+                      dataKey="total"
+                      name={t('adminDashboard.totalCustomersSeries')}
+                      stroke="#10b981"
+                      strokeWidth={2.5}
+                      dot={{ r: 4 }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="new_customers"
+                      name={t('adminDashboard.newRegistrationsSeries')}
+                      stroke="#f59e0b"
+                      strokeWidth={2}
+                      strokeDasharray="4 4"
+                    />
                   </LineChart>
                 </ResponsiveContainer>
               ) : (
                 <div className="h-full flex items-center justify-center text-xs text-slate-400">
-                  No registered customers yet.
+                  {t('adminDashboard.noCustomersYet')}
                 </div>
               )}
             </div>

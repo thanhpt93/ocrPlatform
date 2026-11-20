@@ -14,6 +14,7 @@ export default defineConfig({
     },
   },
   server: {
+    host: true,
     port: frontendPort,
     open: false,
     proxy: {
@@ -22,5 +23,9 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
+  },
+  preview: {
+    host: true,
+    port: frontendPort,
   },
 });

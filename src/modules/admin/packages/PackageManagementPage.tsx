@@ -1,13 +1,9 @@
 import React, { useState } from 'react';
 import {
-  Package as PackageIcon,
   Plus,
   Search,
   Edit2,
   Trash2,
-  CheckCircle2,
-  Layers,
-  Sparkles,
 } from 'lucide-react';
 import { usePlatformStore } from '@/stores/usePlatformStore';
 import { Breadcrumbs } from '@/components/common/Breadcrumbs';
@@ -18,8 +14,10 @@ import { Modal } from '@/components/ui/modal';
 import { Input, Select, Textarea } from '@/components/ui/form-controls';
 import { Package, PackageTier, QuotaType, Duration, BillingType, OveragePolicy } from '@/types';
 import { formatCurrency, formatNumber } from '@/utils/formatters';
+import { useTranslation } from '@/i18n';
 
 export const PackageManagementPage: React.FC = () => {
+  const { t, dict } = useTranslation();
   const { packages, services, addPackage, updatePackage, deletePackage } = usePlatformStore();
 
   const [search, setSearch] = useState('');
@@ -47,6 +45,8 @@ export const PackageManagementPage: React.FC = () => {
   const [features, setFeatures] = useState('REST API, Webhook callbacks, 99.9% SLA');
 
   const tiers = ['All', 'Starter', 'Professional', 'Enterprise', 'Custom'];
+  const tiersMap = dict.common.tiers as Record<string, string>;
+  const durationsMap = dict.common.durations as Record<string, string>;
 
   const filteredPackages = packages.filter((p) => {
     const matchesTier = tierFilter === 'All' || p.tier === tierFilter;
@@ -139,30 +139,33 @@ export const PackageManagementPage: React.FC = () => {
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <Breadcrumbs items={[{ label: 'Admin Portal', path: '/admin/dashboard' }, { label: 'Package Management' }]} />
-          <h1 className="text-2xl font-bold text-slate-900 mt-1 tracking-tight">Package & Pricing Management</h1>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Configure customer quota bundles, billing types, API permissions, and overage policies.
-          </p>
+          <Breadcrumbs
+            items={[
+              { label: t('common.adminPortal'), path: '/admin/dashboard' },
+              { label: t('adminPackages.breadcrumbCurrent') },
+            ]}
+          />
+          <h1 className="text-2xl font-bold text-slate-900 mt-1 tracking-tight">{t('adminPackages.title')}</h1>
+          <p className="text-xs text-slate-500 mt-0.5">{t('adminPackages.subtitle')}</p>
         </div>
         <Button onClick={handleOpenCreate} variant="primary" size="sm" className="bg-amber-600 hover:bg-amber-700">
           <Plus className="h-4 w-4 mr-1" />
-          Create New Package
+          {t('adminPackages.createBtn')}
         </Button>
       </div>
 
       {/* Filter and Search Bar */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-white p-4 rounded-xl border border-slate-200/80 shadow-xs">
         <div className="flex flex-wrap items-center gap-1.5">
-          {tiers.map((t) => (
+          {tiers.map((tierOpt) => (
             <button
-              key={t}
-              onClick={() => setTierFilter(t)}
+              key={tierOpt}
+              onClick={() => setTierFilter(tierOpt)}
               className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                tierFilter === t ? 'bg-amber-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                tierFilter === tierOpt ? 'bg-amber-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
-              {t}
+              {tiersMap[tierOpt] || tierOpt}
             </button>
           ))}
         </div>
@@ -171,7 +174,7 @@ export const PackageManagementPage: React.FC = () => {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <input
             type="text"
-            placeholder="Search packages by name or code..."
+            placeholder={t('adminPackages.searchPlaceholder')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full bg-slate-50 pl-9 pr-4 py-1.5 rounded-lg text-xs text-slate-800 placeholder-slate-400 border border-slate-200 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
@@ -186,15 +189,15 @@ export const PackageManagementPage: React.FC = () => {
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 font-semibold uppercase tracking-wider">
-                  <th className="py-3 px-4">Code</th>
-                  <th className="py-3 px-4">Package Name</th>
-                  <th className="py-3 px-4">OCR Service</th>
-                  <th className="py-3 px-4">Tier</th>
-                  <th className="py-3 px-4">Quota Amount</th>
-                  <th className="py-3 px-4">Price</th>
-                  <th className="py-3 px-4">Duration</th>
-                  <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
+                  <th className="py-3 px-4">{t('adminPackages.colCode')}</th>
+                  <th className="py-3 px-4">{t('adminPackages.colName')}</th>
+                  <th className="py-3 px-4">{t('adminPackages.colService')}</th>
+                  <th className="py-3 px-4">{t('adminPackages.colTier')}</th>
+                  <th className="py-3 px-4">{t('adminPackages.colQuotaAmount')}</th>
+                  <th className="py-3 px-4">{t('adminPackages.colPrice')}</th>
+                  <th className="py-3 px-4">{t('adminPackages.colDuration')}</th>
+                  <th className="py-3 px-4">{t('common.status')}</th>
+                  <th className="py-3 px-4 text-right">{t('common.actions')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -218,23 +221,25 @@ export const PackageManagementPage: React.FC = () => {
                       </Badge>
                     </td>
                     <td className="py-3.5 px-4 font-semibold text-blue-600">
-                      {formatNumber(pkg.quotaAmount)} {pkg.quotaType}s
+                      {formatNumber(pkg.quotaAmount)} {pkg.quotaType}
                     </td>
                     <td className="py-3.5 px-4 font-bold text-slate-900">{formatCurrency(pkg.price)}</td>
-                    <td className="py-3.5 px-4 capitalize text-slate-600">{pkg.duration}</td>
+                    <td className="py-3.5 px-4 text-slate-600">
+                      {durationsMap[pkg.duration] || pkg.duration}
+                    </td>
                     <td className="py-3.5 px-4">
-                      {pkg.status === 'active' && <Badge variant="success">Active</Badge>}
-                      {pkg.status === 'inactive' && <Badge variant="warning">Inactive</Badge>}
-                      {pkg.status === 'archived' && <Badge variant="slate">Archived</Badge>}
+                      {pkg.status === 'active' && <Badge variant="success">{t('common.statuses.active')}</Badge>}
+                      {pkg.status === 'inactive' && <Badge variant="warning">{t('common.statuses.inactive')}</Badge>}
+                      {pkg.status === 'archived' && <Badge variant="slate">{t('common.statuses.archived')}</Badge>}
                     </td>
                     <td className="py-3.5 px-4 text-right">
                       <div className="flex items-center justify-end gap-1.5">
                         <Button onClick={() => handleOpenEdit(pkg)} variant="outline" size="xs">
-                          <Edit2 className="h-3 w-3 mr-1" /> Edit
+                          <Edit2 className="h-3 w-3 mr-1" /> {t('common.edit')}
                         </Button>
                         <Button
                           onClick={() => {
-                            if (confirm(`Delete package ${pkg.name}? Existing subscriptions will not be affected.`)) {
+                            if (confirm(t('adminPackages.deleteConfirm', { name: pkg.name }))) {
                               deletePackage(pkg.id);
                             }
                           }}
@@ -258,28 +263,32 @@ export const PackageManagementPage: React.FC = () => {
       <Modal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        title={editingPackage ? `Edit Package: ${editingPackage.name}` : 'Create Pricing Package'}
-        description="Configure commercial rates, quota allocations, and processing capabilities"
+        title={
+          editingPackage
+            ? t('adminPackages.editTitle', { name: editingPackage.name })
+            : t('adminPackages.createTitle')
+        }
+        description={t('adminPackages.modalDesc')}
         maxWidth="2xl"
       >
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <Input
-              label="Package Code"
+              label={t('adminPackages.codeLabel')}
               value={code}
               onChange={(e) => setCode(e.target.value)}
               required
               hint="e.g. INV-PRO"
             />
             <Input
-              label="Package Name"
+              label={t('adminPackages.nameLabel')}
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
               placeholder="e.g. Professional Plan"
             />
             <Select
-              label="Package Tier"
+              label={t('adminPackages.tierLabel')}
               value={tier}
               onChange={(e) => setTier(e.target.value as PackageTier)}
             >
@@ -289,7 +298,7 @@ export const PackageManagementPage: React.FC = () => {
               <option value="Custom">Custom</option>
             </Select>
             <Select
-              label="Associated OCR Service"
+              label={t('adminPackages.serviceLabel')}
               value={serviceId}
               onChange={(e) => setServiceId(e.target.value)}
             >
@@ -298,14 +307,14 @@ export const PackageManagementPage: React.FC = () => {
               ))}
             </Select>
             <Input
-              label="Price ($)"
+              label={t('adminPackages.priceLabel')}
               type="number"
               value={price}
               onChange={(e) => setPrice(Number(e.target.value))}
               required
             />
             <Select
-              label="Currency"
+              label={t('adminPackages.currencyLabel')}
               value={currency}
               onChange={(e) => setCurrency(e.target.value as any)}
             >
@@ -313,55 +322,55 @@ export const PackageManagementPage: React.FC = () => {
               <option value="VND">VND (₫)</option>
             </Select>
             <Select
-              label="Quota Metric"
+              label={t('adminPackages.quotaMetricLabel')}
               value={quotaType}
               onChange={(e) => setQuotaType(e.target.value as QuotaType)}
             >
-              <option value="Page">Pages</option>
-              <option value="Document">Documents</option>
-              <option value="Credit">Credits</option>
+              <option value="Page">{t('adminPackages.quotaPage')}</option>
+              <option value="Document">{t('adminPackages.quotaDoc')}</option>
+              <option value="Credit">{t('adminPackages.quotaCredit')}</option>
             </Select>
             <Input
-              label="Quota Amount"
+              label={t('adminPackages.quotaAmountLabel')}
               type="number"
               value={quotaAmount}
               onChange={(e) => setQuotaAmount(Number(e.target.value))}
               required
             />
             <Select
-              label="Duration Period"
+              label={t('adminPackages.durationLabel')}
               value={duration}
               onChange={(e) => setDuration(e.target.value as Duration)}
             >
-              <option value="monthly">Monthly</option>
-              <option value="yearly">Yearly</option>
-              <option value="pay_as_you_go">Pay-As-You-Go</option>
+              <option value="monthly">{t('common.durations.monthly')}</option>
+              <option value="yearly">{t('common.durations.yearly')}</option>
+              <option value="pay_as_you_go">{t('common.durations.pay_as_you_go')}</option>
             </Select>
             <Select
-              label="Billing Type"
+              label={t('adminPackages.billingTypeLabel')}
               value={billingType}
               onChange={(e) => setBillingType(e.target.value as BillingType)}
             >
-              <option value="one_time">One-Time / Prepaid</option>
-              <option value="recurring">Recurring Subscription</option>
+              <option value="one_time">{t('adminPackages.billingOneTime')}</option>
+              <option value="recurring">{t('adminPackages.billingRecurring')}</option>
             </Select>
             <Select
-              label="Overage Policy"
+              label={t('adminPackages.overageLabel')}
               value={overagePolicy}
               onChange={(e) => setOveragePolicy(e.target.value as OveragePolicy)}
             >
-              <option value="block">Block (Hard stop when quota reaches 0)</option>
-              <option value="charge_per_unit">Charge Per Unit ($0.02 / page)</option>
-              <option value="grace_period">Grace Period (10% overage allowed)</option>
+              <option value="block">{t('adminPackages.overageBlock')}</option>
+              <option value="charge_per_unit">{t('adminPackages.overageCharge')}</option>
+              <option value="grace_period">{t('adminPackages.overageGrace')}</option>
             </Select>
             <Select
-              label="Status"
+              label={t('common.status')}
               value={status}
               onChange={(e) => setStatus(e.target.value as any)}
             >
-              <option value="active">Active (Visible in Marketplace)</option>
-              <option value="inactive">Inactive</option>
-              <option value="archived">Archived</option>
+              <option value="active">{t('adminPackages.statusActiveOpt')}</option>
+              <option value="inactive">{t('common.statuses.inactive')}</option>
+              <option value="archived">{t('common.statuses.archived')}</option>
             </Select>
           </div>
 
@@ -374,7 +383,7 @@ export const PackageManagementPage: React.FC = () => {
                 onChange={(e) => setApiAccess(e.target.checked)}
                 className="rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
               />
-              API Access
+              {t('adminPackages.apiAccess')}
             </label>
             <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-700">
               <input
@@ -383,7 +392,7 @@ export const PackageManagementPage: React.FC = () => {
                 onChange={(e) => setBatchProcessing(e.target.checked)}
                 className="rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
               />
-              Batch Processing
+              {t('adminPackages.batchProcessing')}
             </label>
             <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-700">
               <input
@@ -392,7 +401,7 @@ export const PackageManagementPage: React.FC = () => {
                 onChange={(e) => setPriorityProcessing(e.target.checked)}
                 className="rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
               />
-              Priority Queue
+              {t('adminPackages.priorityQueue')}
             </label>
             <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-700">
               <input
@@ -401,24 +410,24 @@ export const PackageManagementPage: React.FC = () => {
                 onChange={(e) => setAutoRenewal(e.target.checked)}
                 className="rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
               />
-              Auto Renewal
+              {t('adminPackages.autoRenewal')}
             </label>
           </div>
 
           <Textarea
-            label="Package Features (One per line)"
+            label={t('adminPackages.featuresLabel')}
             value={features}
             onChange={(e) => setFeatures(e.target.value)}
             rows={4}
-            hint="Features displayed to customers on the pricing selection cards"
+            hint={t('adminPackages.featuresHint')}
           />
 
           <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
             <Button type="button" onClick={() => setIsModalOpen(false)} variant="outline" size="sm">
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button type="submit" variant="primary" size="sm" className="bg-amber-600 hover:bg-amber-700">
-              {editingPackage ? 'Save Package' : 'Create Package'}
+              {editingPackage ? t('adminPackages.savePackage') : t('adminPackages.createPackage')}
             </Button>
           </div>
         </form>

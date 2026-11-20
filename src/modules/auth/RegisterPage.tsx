@@ -5,9 +5,12 @@ import { authApi } from '@/services/api/endpoints';
 import { api } from '@/services/api/client';
 import { usePlatformStore } from '@/stores/usePlatformStore';
 import { Button } from '@/components/ui/button';
+import { LanguageSwitcher } from '@/components/common/LanguageSwitcher';
+import { useTranslation } from '@/i18n';
 
 export const RegisterPage: React.FC = () => {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const { syncWithBackend } = usePlatformStore();
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -56,23 +59,27 @@ export const RegisterPage: React.FC = () => {
       await syncWithBackend();
       navigate('/app/dashboard');
     } catch (err: any) {
-      setError(err?.message || 'Registration failed. Please check your inputs.');
+      setError(err?.message || t('auth.registerFailed'));
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 flex flex-col justify-center py-10 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-slate-900 flex flex-col justify-center py-10 sm:px-6 lg:px-8 relative">
+      <div className="absolute top-5 right-6">
+        <LanguageSwitcher variant="dark" />
+      </div>
+
       <div className="sm:mx-auto sm:w-full sm:max-w-md text-center">
         <div className="inline-flex h-12 w-12 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 items-center justify-center text-white shadow-lg shadow-blue-500/30 mb-3">
           <Sparkles className="h-6 w-6" />
         </div>
         <h2 className="text-3xl font-extrabold text-white tracking-tight">
-          Create Account
+          {t('auth.createAccountTitle')}
         </h2>
         <p className="mt-1 text-xs text-slate-400">
-          Join ocrPlatform to discover OCR models and purchase cryptographic licenses
+          {t('auth.registerSubtitle')}
         </p>
       </div>
 
@@ -88,7 +95,7 @@ export const RegisterPage: React.FC = () => {
           <form className="space-y-3.5" onSubmit={handleSubmit}>
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Full Name *
+                {t('auth.fullNameRequired')}
               </label>
               <div className="relative">
                 <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -97,7 +104,7 @@ export const RegisterPage: React.FC = () => {
                   required
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
-                  placeholder="e.g. John Doe"
+                  placeholder={t('auth.fullNamePlaceholder')}
                   className="w-full bg-slate-900/80 border border-slate-700 text-white rounded-lg pl-9 pr-3 py-2 text-xs focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 placeholder-slate-500"
                 />
               </div>
@@ -105,7 +112,7 @@ export const RegisterPage: React.FC = () => {
 
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Email Address *
+                {t('auth.emailRequiredLabel')}
               </label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -114,7 +121,7 @@ export const RegisterPage: React.FC = () => {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="john@company.com"
+                  placeholder={t('auth.emailPlaceholder')}
                   className="w-full bg-slate-900/80 border border-slate-700 text-white rounded-lg pl-9 pr-3 py-2 text-xs focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 placeholder-slate-500"
                 />
               </div>
@@ -122,7 +129,7 @@ export const RegisterPage: React.FC = () => {
 
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Password * (minimum 6 characters)
+                {t('auth.passwordRequiredLabel')}
               </label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -140,7 +147,7 @@ export const RegisterPage: React.FC = () => {
 
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Organization / Company Name
+                {t('auth.companyNameLabel')}
               </label>
               <div className="relative">
                 <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -148,7 +155,7 @@ export const RegisterPage: React.FC = () => {
                   type="text"
                   value={companyName}
                   onChange={(e) => setCompanyName(e.target.value)}
-                  placeholder="e.g. Acme Corp (Optional)"
+                  placeholder={t('auth.companyNamePlaceholder')}
                   className="w-full bg-slate-900/80 border border-slate-700 text-white rounded-lg pl-9 pr-3 py-2 text-xs focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 placeholder-slate-500"
                 />
               </div>
@@ -156,7 +163,7 @@ export const RegisterPage: React.FC = () => {
 
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Phone Number
+                {t('auth.phoneLabel')}
               </label>
               <div className="relative">
                 <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -164,7 +171,7 @@ export const RegisterPage: React.FC = () => {
                   type="text"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
-                  placeholder="e.g. +84 912 345 678 (Optional)"
+                  placeholder={t('auth.phonePlaceholder')}
                   className="w-full bg-slate-900/80 border border-slate-700 text-white rounded-lg pl-9 pr-3 py-2 text-xs focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 placeholder-slate-500"
                 />
               </div>
@@ -177,16 +184,16 @@ export const RegisterPage: React.FC = () => {
                 variant="primary"
                 className="w-full justify-center py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md shadow-blue-600/30"
               >
-                {loading ? 'Creating Account...' : 'Register Account'}
+                {loading ? t('auth.creatingAccount') : t('auth.registerSubmit')}
                 <ArrowRight className="h-4 w-4 ml-1.5" />
               </Button>
             </div>
           </form>
 
           <div className="mt-5 pt-4 border-t border-slate-700/60 text-center text-xs text-slate-400">
-            <span>Already have an account? </span>
+            <span>{t('auth.alreadyHaveAccount')} </span>
             <Link to="/login" className="text-blue-400 hover:text-blue-300 font-semibold underline underline-offset-2">
-              Sign In
+              {t('auth.signIn')}
             </Link>
           </div>
         </div>

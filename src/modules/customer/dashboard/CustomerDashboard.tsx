@@ -32,11 +32,13 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { formatNumber, formatDateTime, formatDate } from '@/utils/formatters';
+import { useTranslation, localizeServiceName, localizePackageName } from '@/i18n';
 
 const PIE_COLORS = ['#2563eb', '#0ea5e9', '#10b981', '#8b5cf6', '#f59e0b', '#ec4899'];
 
 export const CustomerDashboard: React.FC = () => {
   const navigate = useNavigate();
+  const { t, lang, dict } = useTranslation();
   const {
     customers,
     activeCustomerId,
@@ -65,8 +67,8 @@ export const CustomerDashboard: React.FC = () => {
       currentUser?.full_name ||
       currentUser?.email ||
       matchedCustomer?.orgName ||
-      'My Organization'
-    : 'Guest';
+      t('common.myOrganization')
+    : t('common.guest');
 
   // Customer-specific real records from backend
   const customerSubs = useMemo(
@@ -132,13 +134,13 @@ export const CustomerDashboard: React.FC = () => {
     () =>
       (customerUsageSummary?.service_breakdown || []).map((item, idx) => ({
         serviceId: item.service_id,
-        name: item.service_name,
+        name: localizeServiceName(item.service_name, dict),
         value: item.percentage,
         units: item.usage_units,
         jobsCount: item.jobs_count,
         color: PIE_COLORS[idx % PIE_COLORS.length],
       })),
-    [customerUsageSummary]
+    [customerUsageSummary, dict]
   );
 
   // Real Quota & Expiration Alerts derived strictly from customerLicenses & customerSubs
@@ -154,19 +156,30 @@ export const CustomerDashboard: React.FC = () => {
 
     for (const lic of customerLicenses) {
       const rem = lic.remainingQuota ?? Math.max(0, (lic.quota || 0) - (lic.usedQuota || 0));
+      const label = lic.serviceName
+        ? localizeServiceName(lic.serviceName, dict)
+        : localizePackageName(lic.packageName, dict);
       if (lic.status === 'active' && lic.quota > 0 && rem === 0) {
         items.push({
           id: `exhausted-${lic.id}`,
           severity: 'danger',
-          title: `Hết hạn mức: ${lic.serviceName || lic.packageName}`,
-          detail: `License ${lic.maskedKey} đã dùng hết ${formatNumber(lic.quota)}/${formatNumber(lic.quota)} lượt.`,
+          title: t('customerDashboard.alerts.exhaustedTitle', { name: label }),
+          detail: t('customerDashboard.alerts.exhaustedDetail', {
+            key: lic.maskedKey,
+            used: formatNumber(lic.quota),
+            total: formatNumber(lic.quota),
+          }),
         });
       } else if (lic.status === 'active' && lic.quota > 0 && rem / lic.quota <= 0.15) {
         items.push({
           id: `low-${lic.id}`,
           severity: 'warning',
-          title: `Sắp hết hạn mức: ${lic.serviceName || lic.packageName}`,
-          detail: `License ${lic.maskedKey} chỉ còn ${formatNumber(rem)}/${formatNumber(lic.quota)} lượt.`,
+          title: t('customerDashboard.alerts.lowTitle', { name: label }),
+          detail: t('customerDashboard.alerts.lowDetail', {
+            key: lic.maskedKey,
+            rem: formatNumber(rem),
+            total: formatNumber(lic.quota),
+          }),
         });
       }
 
@@ -176,43 +189,50 @@ export const CustomerDashboard: React.FC = () => {
           items.push({
             id: `expiring-${lic.id}`,
             severity: 'warning',
-            title: `License sắp hết hạn`,
-            detail: `${lic.maskedKey} (${lic.serviceName || lic.packageName}) sẽ hết hạn vào ${formatDate(lic.expirationDate)}.`,
+            title: t('customerDashboard.alerts.expiringTitle'),
+            detail: t('customerDashboard.alerts.expiringDetail', {
+              key: lic.maskedKey,
+              name: label,
+              date: formatDate(lic.expirationDate),
+            }),
           });
         }
       } else if (lic.status === 'expired' || lic.status === 'suspended' || lic.status === 'revoked') {
         items.push({
           id: `status-${lic.id}`,
           severity: lic.status === 'revoked' ? 'danger' : 'info',
-          title: `License ${lic.status}: ${lic.maskedKey}`,
-          detail: `${lic.serviceName || lic.packageName} không còn hoạt động.`,
+          title: t('customerDashboard.alerts.statusTitle', {
+            status: t(`common.statuses.${lic.status}`),
+            key: lic.maskedKey,
+          }),
+          detail: t('customerDashboard.alerts.statusDetail', { name: label }),
         });
       }
     }
 
     return items;
-  }, [customerLicenses]);
+  }, [customerLicenses, lang]);
 
   return (
     <div className="space-y-6">
       {/* Top Header & Breadcrumbs */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <Breadcrumbs items={[{ label: 'Customer Portal', path: '/app/dashboard' }, { label: 'Dashboard' }]} />
+          <Breadcrumbs items={[{ label: t('common.customerPortal'), path: '/app/dashboard' }, { label: t('customerDashboard.breadcrumbCurrent') }]} />
           <h1 className="text-2xl font-bold text-slate-900 mt-1 tracking-tight">
-            Welcome back, {displayOrgName}
+            {t('customerDashboard.welcome', { name: displayOrgName })}
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Real-time OCR processing overview, quota consumption, and active licenses.
+            {t('customerDashboard.subtitle')}
           </p>
         </div>
         <div className="flex items-center gap-3">
           <Button onClick={() => navigate('/app/marketplace')} variant="primary" size="sm">
             <Sparkles className="h-4 w-4 mr-1 text-blue-200" />
-            Explore OCR Marketplace
+            {t('customerDashboard.exploreMarketplace')}
           </Button>
           <Button onClick={() => navigate('/app/jobs')} variant="outline" size="sm">
-            View All Jobs
+            {t('customerDashboard.viewAllJobs')}
           </Button>
         </div>
       </div>
@@ -220,44 +240,48 @@ export const CustomerDashboard: React.FC = () => {
       {/* KPI Stats Grid (100% real data) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
-          title="Active OCR Services"
+          title={t('customerDashboard.kpi.activeServices')}
           value={activeServicesCount}
           subtitle={
             activeSubsCount > 0
-              ? `${activeSubsCount} active subscription(s)`
+              ? t('customerDashboard.kpi.activeSubs', { count: activeSubsCount })
               : activeLicensesCount > 0
-              ? `${activeLicensesCount} active license(s)`
-              : 'No active subscription'
+              ? t('customerDashboard.kpi.activeLics', { count: activeLicensesCount })
+              : t('customerDashboard.kpi.noActiveSub')
           }
           icon={<Layers className="h-5 w-5" />}
           iconBgColor="bg-blue-50 text-blue-600"
         />
         <StatCard
-          title="Units Processed"
+          title={t('customerDashboard.kpi.unitsProcessed')}
           value={formatNumber(usedQuota)}
           subtitle={
             totalJobsCount > 0
-              ? `${formatNumber(totalJobsCount)} recorded job(s)`
-              : 'No usage recorded'
+              ? t('customerDashboard.kpi.recordedJobs', { count: formatNumber(totalJobsCount) })
+              : t('customerDashboard.kpi.noUsageRecorded')
           }
           icon={<FileCheck2 className="h-5 w-5" />}
           iconBgColor="bg-indigo-50 text-indigo-600"
         />
         <StatCard
-          title="Remaining Quota"
-          value={`${formatNumber(remainingQuota)} units`}
+          title={t('customerDashboard.kpi.remainingQuota')}
+          value={`${formatNumber(remainingQuota)} ${t('common.units')}`}
           subtitle={
             totalQuota > 0
-              ? `${quotaPercent}% consumed of ${formatNumber(totalQuota)}`
-              : 'Quota not provisioned'
+              ? t('customerDashboard.kpi.quotaConsumed', { percent: quotaPercent, total: formatNumber(totalQuota) })
+              : t('customerDashboard.kpi.quotaNotProvisioned')
           }
           icon={<Gauge className="h-5 w-5" />}
           iconBgColor="bg-amber-50 text-amber-600"
         />
         <StatCard
-          title="Active Licenses"
+          title={t('customerDashboard.kpi.activeLicenses')}
           value={activeLicensesCount}
-          subtitle={activeLicensesCount > 0 ? 'Provisioned License Keys' : 'No active licenses'}
+          subtitle={
+            activeLicensesCount > 0
+              ? t('customerDashboard.kpi.provisionedKeys')
+              : t('customerDashboard.kpi.noActiveLicenses')
+          }
           icon={<KeyRound className="h-5 w-5" />}
           iconBgColor="bg-emerald-50 text-emerald-600"
         />
@@ -273,14 +297,10 @@ export const CustomerDashboard: React.FC = () => {
               </div>
               <div className="space-y-1">
                 <h3 className="text-base font-bold text-slate-900">
-                  {isAuthenticated
-                    ? 'Chào mừng bạn đến với ocrPlatform! Tài khoản mới đã sẵn sàng.'
-                    : 'Chào mừng bạn đến với ocrPlatform! Vui lòng đăng nhập để bắt đầu.'}
+                  {isAuthenticated ? t('customerDashboard.onboarding.authTitle') : t('customerDashboard.onboarding.guestTitle')}
                 </h3>
                 <p className="text-xs text-slate-600 leading-relaxed max-w-2xl">
-                  {isAuthenticated
-                    ? 'Tài khoản của bạn hiện ở trạng thái sạch, chưa có gói dịch vụ nào. Hãy vào OCR Marketplace để chọn gói dịch vụ (Page, Document hoặc Credit), thực hiện quy trình Đặt hàng & Thanh toán để hệ thống tự động cấp phát Gói đăng ký (Subscription), Giấy phép (License) và API Key.'
-                    : 'Đăng nhập hoặc đăng ký tài khoản khách hàng để mua gói OCR, nhận License Key và theo dõi dữ liệu xử lý thực tế.'}
+                  {isAuthenticated ? t('customerDashboard.onboarding.authDesc') : t('customerDashboard.onboarding.guestDesc')}
                 </p>
               </div>
             </div>
@@ -291,7 +311,7 @@ export const CustomerDashboard: React.FC = () => {
               className="shrink-0 bg-blue-600 hover:bg-blue-500 text-white shadow-md shadow-blue-500/20"
             >
               <Sparkles className="h-4 w-4 mr-1.5" />
-              {isAuthenticated ? 'Khám phá OCR Marketplace' : 'Đăng nhập ngay'}
+              {isAuthenticated ? t('customerDashboard.onboarding.exploreBtn') : t('customerDashboard.onboarding.loginBtn')}
             </Button>
           </div>
         </Card>
@@ -304,11 +324,11 @@ export const CustomerDashboard: React.FC = () => {
           <Card className="lg:col-span-2">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <div>
-                <CardTitle>OCR Processing Volume Trend</CardTitle>
-                <CardDescription>Real daily units processed over the last 14 days</CardDescription>
+                <CardTitle>{t('customerDashboard.charts.volumeTitle')}</CardTitle>
+                <CardDescription>{t('customerDashboard.charts.volumeDesc')}</CardDescription>
               </div>
               <Badge variant="default" size="sm">
-                <TrendingUp className="h-3 w-3 mr-1" /> Live DB
+                <TrendingUp className="h-3 w-3 mr-1" /> {t('customerDashboard.charts.liveDb')}
               </Badge>
             </CardHeader>
             <CardContent>
@@ -332,7 +352,7 @@ export const CustomerDashboard: React.FC = () => {
                       <Area
                         type="monotone"
                         dataKey="pages"
-                        name="Units Processed"
+                        name={t('customerDashboard.charts.unitsProcessedName')}
                         stroke="#2563eb"
                         strokeWidth={2.5}
                         fillOpacity={1}
@@ -342,7 +362,7 @@ export const CustomerDashboard: React.FC = () => {
                   </ResponsiveContainer>
                 ) : (
                   <div className="h-full flex items-center justify-center text-xs text-slate-400 text-center px-4">
-                    Chưa có lượt xử lý OCR nào được ghi nhận trong 14 ngày qua.
+                    {t('customerDashboard.charts.noRecentUsage')}
                   </div>
                 )}
               </div>
@@ -352,8 +372,8 @@ export const CustomerDashboard: React.FC = () => {
           {/* Breakdown by Service */}
           <Card>
             <CardHeader>
-              <CardTitle>Usage by OCR Service</CardTitle>
-              <CardDescription>Real share of quota consumption</CardDescription>
+              <CardTitle>{t('customerDashboard.charts.usageByServiceTitle')}</CardTitle>
+              <CardDescription>{t('customerDashboard.charts.usageByServiceDesc')}</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col items-center justify-center">
               {serviceDistribution.length > 0 ? (
@@ -388,7 +408,7 @@ export const CustomerDashboard: React.FC = () => {
                           <span className="truncate max-w-[150px]">{s.name}</span>
                         </div>
                         <span className="font-semibold text-slate-800 shrink-0">
-                          {s.value}% ({formatNumber(s.units)} units)
+                          {s.value}% ({formatNumber(s.units)} {t('common.units')})
                         </span>
                       </div>
                     ))}
@@ -396,7 +416,7 @@ export const CustomerDashboard: React.FC = () => {
                 </>
               ) : (
                 <div className="h-52 flex items-center justify-center text-xs text-slate-400 text-center px-4">
-                  Chưa có lượt sử dụng dịch vụ OCR nào được ghi nhận.
+                  {t('customerDashboard.charts.noServiceUsage')}
                 </div>
               )}
             </CardContent>
@@ -412,16 +432,16 @@ export const CustomerDashboard: React.FC = () => {
             <CardHeader className="pb-2">
               <div className="flex items-center gap-2">
                 <AlertTriangle className="h-4 w-4 text-slate-600" />
-                <CardTitle className="text-slate-800 text-sm">Quota & Expiration Alerts</CardTitle>
+                <CardTitle className="text-slate-800 text-sm">{t('customerDashboard.alerts.cardTitle')}</CardTitle>
               </div>
             </CardHeader>
             <CardContent className="space-y-3">
               {!hasActiveAccess && alerts.length === 0 ? (
                 <div className="p-3.5 bg-slate-50 rounded-lg border border-slate-200 text-center">
                   <ShieldCheck className="h-5 w-5 text-emerald-500 mx-auto mb-1.5" />
-                  <p className="text-xs font-semibold text-slate-700">Tài khoản bình thường</p>
+                  <p className="text-xs font-semibold text-slate-700">{t('customerDashboard.alerts.healthyAccountTitle')}</p>
                   <p className="text-[11px] text-slate-500 mt-0.5">
-                    Không có cảnh báo hạn mức hoặc hết hạn nào cho tài khoản này.
+                    {t('customerDashboard.alerts.healthyAccountDesc')}
                   </p>
                 </div>
               ) : alerts.length > 0 ? (
@@ -449,20 +469,24 @@ export const CustomerDashboard: React.FC = () => {
                     </div>
                   ))}
                   <Button onClick={() => navigate('/app/licenses')} variant="outline" size="xs" className="w-full">
-                    Manage Licenses
+                    {t('customerDashboard.alerts.manageLicenses')}
                   </Button>
                 </div>
               ) : (
                 <div className="p-3 bg-white rounded-lg border border-emerald-200/80 shadow-xs">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-semibold text-slate-800">Active Service Status</span>
-                    <Badge variant="success" size="sm">Healthy</Badge>
+                    <span className="text-xs font-semibold text-slate-800">{t('customerDashboard.alerts.activeServiceStatus')}</span>
+                    <Badge variant="success" size="sm">{t('customerDashboard.alerts.healthyBadge')}</Badge>
                   </div>
                   <p className="text-[11px] text-slate-500 mb-2">
-                    {formatNumber(remainingQuota)} / {formatNumber(totalQuota)} units remaining across {activeLicensesCount} active license(s).
+                    {t('customerDashboard.alerts.remainingSummary', {
+                      rem: formatNumber(remainingQuota),
+                      total: formatNumber(totalQuota),
+                      count: activeLicensesCount,
+                    })}
                   </p>
                   <Button onClick={() => navigate('/app/licenses')} variant="outline" size="xs" className="w-full">
-                    Manage Licenses
+                    {t('customerDashboard.alerts.manageLicenses')}
                   </Button>
                 </div>
               )}
@@ -474,11 +498,11 @@ export const CustomerDashboard: React.FC = () => {
         <Card className="lg:col-span-2">
           <CardHeader className="flex flex-row items-center justify-between pb-3">
             <div>
-              <CardTitle>Recent OCR Jobs</CardTitle>
-              <CardDescription>Latest files processed across your account</CardDescription>
+              <CardTitle>{t('customerDashboard.recentJobs.title')}</CardTitle>
+              <CardDescription>{t('customerDashboard.recentJobs.desc')}</CardDescription>
             </div>
             <Button onClick={() => navigate('/app/jobs')} variant="ghost" size="sm">
-              View All <ArrowRight className="h-3.5 w-3.5 ml-1" />
+              {t('customerDashboard.recentJobs.viewAll')} <ArrowRight className="h-3.5 w-3.5 ml-1" />
             </Button>
           </CardHeader>
           <CardContent className="p-0">
@@ -486,19 +510,19 @@ export const CustomerDashboard: React.FC = () => {
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 font-semibold uppercase tracking-wider">
-                    <th className="py-2.5 px-4">Job ID</th>
-                    <th className="py-2.5 px-4">File Name</th>
-                    <th className="py-2.5 px-4">OCR Service</th>
-                    <th className="py-2.5 px-4">Units</th>
-                    <th className="py-2.5 px-4">Status</th>
-                    <th className="py-2.5 px-4 text-right">Time</th>
+                    <th className="py-2.5 px-4">{t('customerDashboard.recentJobs.colId')}</th>
+                    <th className="py-2.5 px-4">{t('customerDashboard.recentJobs.colFile')}</th>
+                    <th className="py-2.5 px-4">{t('customerDashboard.recentJobs.colService')}</th>
+                    <th className="py-2.5 px-4">{t('customerDashboard.recentJobs.colUnits')}</th>
+                    <th className="py-2.5 px-4">{t('customerDashboard.recentJobs.colStatus')}</th>
+                    <th className="py-2.5 px-4 text-right">{t('customerDashboard.recentJobs.colTime')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {customerJobs.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="py-8 text-center text-xs text-slate-500">
-                        Chưa có tác vụ OCR nào được xử lý cho tài khoản này.
+                        {t('customerDashboard.recentJobs.empty')}
                       </td>
                     </tr>
                   ) : (
@@ -508,13 +532,13 @@ export const CustomerDashboard: React.FC = () => {
                         <td className="py-3 px-4 font-medium text-slate-800 truncate max-w-[200px]" title={job.fileName}>
                           {job.fileName}
                         </td>
-                        <td className="py-3 px-4 text-slate-600">{job.serviceName}</td>
+                        <td className="py-3 px-4 text-slate-600">{localizeServiceName(job.serviceName, dict)}</td>
                         <td className="py-3 px-4 text-slate-600">{job.pageCount}</td>
                         <td className="py-3 px-4">
-                          {job.status === 'completed' && <Badge variant="success">Completed</Badge>}
-                          {job.status === 'processing' && <Badge variant="info">Processing</Badge>}
-                          {job.status === 'queued' && <Badge variant="warning">Queued</Badge>}
-                          {job.status === 'failed' && <Badge variant="danger">Failed</Badge>}
+                          {job.status === 'completed' && <Badge variant="success">{t('common.statuses.completed')}</Badge>}
+                          {job.status === 'processing' && <Badge variant="info">{t('common.statuses.processing')}</Badge>}
+                          {job.status === 'queued' && <Badge variant="warning">{t('common.statuses.queued')}</Badge>}
+                          {job.status === 'failed' && <Badge variant="danger">{t('common.statuses.failed')}</Badge>}
                         </td>
                         <td className="py-3 px-4 text-right text-slate-400 font-mono text-[11px]">
                           {job.createdAt ? formatDateTime(job.createdAt) : job.submissionTime || '—'}

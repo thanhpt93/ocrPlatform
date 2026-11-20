@@ -3,9 +3,6 @@ import {
   Key,
   Copy,
   Check,
-  ShieldCheck,
-  AlertTriangle,
-  Clock,
   PlusCircle,
   Eye,
   RefreshCw,
@@ -16,15 +13,17 @@ import {
 import { usePlatformStore } from '@/stores/usePlatformStore';
 import { licensesApi } from '@/services/api/endpoints';
 import { Breadcrumbs } from '@/components/common/Breadcrumbs';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { Input } from '@/components/ui/form-controls';
 import { License } from '@/types';
 import { formatDate, formatDateTime, formatNumber } from '@/utils/formatters';
+import { useTranslation, localizeServiceName, localizePackageName } from '@/i18n';
 
 export const LicensesPage: React.FC = () => {
+  const { t, dict } = useTranslation();
   const { licenses, activeCustomerId, currentUser, activateLicenseByKey, renewLicense, syncWithBackend } = usePlatformStore();
 
   useEffect(() => {
@@ -54,11 +53,14 @@ export const LicensesPage: React.FC = () => {
   const [credError, setCredError] = useState<string | null>(null);
 
   const filteredLicenses = customerLicenses.filter((l) => {
+    const q = search.toLowerCase();
     return (
-      l.id.toLowerCase().includes(search.toLowerCase()) ||
-      l.serviceName.toLowerCase().includes(search.toLowerCase()) ||
-      l.packageName.toLowerCase().includes(search.toLowerCase()) ||
-      l.maskedKey.toLowerCase().includes(search.toLowerCase())
+      l.id.toLowerCase().includes(q) ||
+      l.serviceName.toLowerCase().includes(q) ||
+      localizeServiceName(l.serviceName, dict).toLowerCase().includes(q) ||
+      l.packageName.toLowerCase().includes(q) ||
+      localizePackageName(l.packageName, dict).toLowerCase().includes(q) ||
+      l.maskedKey.toLowerCase().includes(q)
     );
   });
 
@@ -114,7 +116,7 @@ export const LicensesPage: React.FC = () => {
       setNewCredName('');
       await loadCredentials(selectedLicense.id);
     } catch (err: any) {
-      setCredError(err?.message || 'Failed to generate credential');
+      setCredError(err?.message || t('licenses.generateFailed'));
     } finally {
       setCredLoading(false);
     }
@@ -135,15 +137,15 @@ export const LicensesPage: React.FC = () => {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <Breadcrumbs items={[{ label: 'Customer Portal', path: '/app/dashboard' }, { label: 'My Licenses' }]} />
-          <h1 className="text-2xl font-bold text-slate-900 mt-1 tracking-tight">API Licenses & Keys</h1>
+          <Breadcrumbs items={[{ label: t('common.customerPortal'), path: '/app/dashboard' }, { label: t('licenses.breadcrumbCurrent') }]} />
+          <h1 className="text-2xl font-bold text-slate-900 mt-1 tracking-tight">{t('licenses.title')}</h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Manage cryptographic license keys for API access and SDK on-premise integrations.
+            {t('licenses.subtitle')}
           </p>
         </div>
         <Button onClick={() => setIsActivateModalOpen(true)} variant="primary" size="sm">
           <Key className="h-4 w-4 mr-1 text-blue-200" />
-          Activate New License Key
+          {t('licenses.activateNewBtn')}
         </Button>
       </div>
 
@@ -153,14 +155,14 @@ export const LicensesPage: React.FC = () => {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <input
             type="text"
-            placeholder="Search licenses by ID, service, or key..."
+            placeholder={t('licenses.searchPlaceholder')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full bg-slate-50 pl-9 pr-4 py-1.5 rounded-lg text-xs text-slate-800 placeholder-slate-400 border border-slate-200 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
         </div>
         <div className="text-xs text-slate-500 font-medium">
-          Total Licenses: <span className="font-bold text-slate-800">{customerLicenses.length}</span>
+          {t('licenses.totalLicenses')} <span className="font-bold text-slate-800">{customerLicenses.length}</span>
         </div>
       </div>
 
@@ -171,14 +173,14 @@ export const LicensesPage: React.FC = () => {
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 font-semibold uppercase tracking-wider">
-                  <th className="py-3 px-4">License ID</th>
-                  <th className="py-3 px-4">Masked Key</th>
-                  <th className="py-3 px-4">OCR Service</th>
-                  <th className="py-3 px-4">Package</th>
-                  <th className="py-3 px-4">Issued Date</th>
-                  <th className="py-3 px-4">Expiration Date</th>
-                  <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
+                  <th className="py-3 px-4">{t('licenses.colId')}</th>
+                  <th className="py-3 px-4">{t('licenses.colMaskedKey')}</th>
+                  <th className="py-3 px-4">{t('licenses.colService')}</th>
+                  <th className="py-3 px-4">{t('licenses.colPackage')}</th>
+                  <th className="py-3 px-4">{t('licenses.colIssued')}</th>
+                  <th className="py-3 px-4">{t('licenses.colExpiry')}</th>
+                  <th className="py-3 px-4">{t('common.status')}</th>
+                  <th className="py-3 px-4 text-right">{t('common.actions')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -192,7 +194,7 @@ export const LicensesPage: React.FC = () => {
                           <button
                             onClick={() => handleCopyKey(lic.licenseKey, lic.id)}
                             className="text-slate-400 hover:text-blue-600 transition-colors"
-                            title="Copy full key"
+                            title={t('licenses.copyFullKey')}
                           >
                             {copiedKey === lic.id ? (
                               <Check className="h-3.5 w-3.5 text-emerald-600" />
@@ -202,16 +204,16 @@ export const LicensesPage: React.FC = () => {
                           </button>
                         </div>
                       </td>
-                      <td className="py-3.5 px-4 font-semibold text-slate-800">{lic.serviceName}</td>
-                      <td className="py-3.5 px-4 text-slate-600">{lic.packageName}</td>
+                      <td className="py-3.5 px-4 font-semibold text-slate-800">{localizeServiceName(lic.serviceName, dict)}</td>
+                      <td className="py-3.5 px-4 text-slate-600">{localizePackageName(lic.packageName, dict)}</td>
                       <td className="py-3.5 px-4 text-slate-500">{formatDate(lic.startDate)}</td>
                       <td className="py-3.5 px-4 text-slate-500">{formatDate(lic.expirationDate)}</td>
                       <td className="py-3.5 px-4">
-                        {lic.status === 'active' && <Badge variant="success">Active</Badge>}
-                        {lic.status === 'pending' && <Badge variant="warning">Pending</Badge>}
-                        {lic.status === 'suspended' && <Badge variant="danger">Suspended</Badge>}
-                        {lic.status === 'expired' && <Badge variant="slate">Expired</Badge>}
-                        {lic.status === 'revoked' && <Badge variant="danger">Revoked</Badge>}
+                        {lic.status === 'active' && <Badge variant="success">{t('common.statuses.active')}</Badge>}
+                        {lic.status === 'pending' && <Badge variant="warning">{t('common.statuses.pending')}</Badge>}
+                        {lic.status === 'suspended' && <Badge variant="danger">{t('common.statuses.suspended')}</Badge>}
+                        {lic.status === 'expired' && <Badge variant="slate">{t('common.statuses.expired')}</Badge>}
+                        {lic.status === 'revoked' && <Badge variant="danger">{t('common.statuses.revoked')}</Badge>}
                       </td>
                       <td className="py-3.5 px-4 text-right">
                         <div className="flex items-center justify-end gap-1.5">
@@ -226,7 +228,7 @@ export const LicensesPage: React.FC = () => {
                             size="xs"
                           >
                             <Eye className="h-3 w-3 mr-1" />
-                            Details
+                            {t('common.details')}
                           </Button>
                           <Button
                             onClick={() => {
@@ -237,7 +239,7 @@ export const LicensesPage: React.FC = () => {
                             size="xs"
                           >
                             <RefreshCw className="h-3 w-3 mr-1" />
-                            Renew
+                            {t('licenses.renewBtn')}
                           </Button>
                         </div>
                       </td>
@@ -246,7 +248,7 @@ export const LicensesPage: React.FC = () => {
                 ) : (
                   <tr>
                     <td colSpan={8} className="py-12 text-center text-slate-400">
-                      No licenses found matching your search.
+                      {t('licenses.empty')}
                     </td>
                   </tr>
                 )}
@@ -263,17 +265,17 @@ export const LicensesPage: React.FC = () => {
           setIsActivateModalOpen(false);
           setActivationFeedback(null);
         }}
-        title="Activate OCR License Key"
-        description="Enter the 25-character license token issued by your organization or vendor voucher"
+        title={t('licenses.activateModalTitle')}
+        description={t('licenses.activateModalDesc')}
       >
         <form onSubmit={handleActivateSubmit} className="space-y-4">
           <Input
-            label="License Key"
+            label={t('licenses.licenseKeyLabel')}
             placeholder="e.g. OCR-FCG1-9982-A87F-B7100A921"
             value={inputLicenseKey}
             onChange={(e) => setInputLicenseKey(e.target.value)}
             required
-            hint="Format: OCR-XXXX-XXXX-XXXX-XXXXXXXXX"
+            hint={t('licenses.licenseKeyHint')}
           />
 
           {activationFeedback && (
@@ -298,10 +300,10 @@ export const LicensesPage: React.FC = () => {
               variant="outline"
               size="sm"
             >
-              Close
+              {t('common.close')}
             </Button>
             <Button type="submit" variant="primary" size="sm">
-              Verify & Activate
+              {t('licenses.verifyActivate')}
             </Button>
           </div>
         </form>
@@ -315,8 +317,8 @@ export const LicensesPage: React.FC = () => {
             setIsDetailOpen(false);
             setGeneratedKey(null);
           }}
-          title={`License Details: ${selectedLicense.id}`}
-          description="Cryptographic key parameters, API credentials, and authorization history"
+          title={t('licenses.detailTitle', { id: selectedLicense.id })}
+          description={t('licenses.detailDesc')}
           maxWidth="lg"
         >
           <div className="space-y-4 text-xs">
@@ -330,7 +332,7 @@ export const LicensesPage: React.FC = () => {
                     : 'border-transparent text-slate-500 hover:text-slate-800'
                 }`}
               >
-                Overview & History
+                {t('licenses.tabOverview')}
               </button>
               <button
                 onClick={() => setDetailTab('credentials')}
@@ -341,7 +343,7 @@ export const LicensesPage: React.FC = () => {
                 }`}
               >
                 <Key className="h-3.5 w-3.5" />
-                API Credentials
+                {t('licenses.tabCredentials')}
                 {credentials.length > 0 && (
                   <span className="px-1.5 py-0.2 bg-blue-100 text-blue-700 rounded-full text-[10px]">
                     {credentials.length}
@@ -355,13 +357,13 @@ export const LicensesPage: React.FC = () => {
                 {/* Full Key Box */}
                 <div className="p-3 bg-slate-900 text-white rounded-lg flex items-center justify-between font-mono">
                   <div>
-                    <span className="text-[10px] text-slate-400 uppercase tracking-wider block">Full License Key</span>
+                    <span className="text-[10px] text-slate-400 uppercase tracking-wider block">{t('licenses.fullKeyLabel')}</span>
                     <span className="text-emerald-400 font-semibold">{selectedLicense.licenseKey}</span>
                   </div>
                   <button
                     onClick={() => handleCopyKey(selectedLicense.licenseKey, 'modal')}
                     className="p-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300"
-                    title="Copy to clipboard"
+                    title={t('licenses.copyClipboard')}
                   >
                     {copiedKey === 'modal' ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
                   </button>
@@ -369,34 +371,34 @@ export const LicensesPage: React.FC = () => {
 
                 <div className="grid grid-cols-2 gap-3 p-4 bg-slate-50 rounded-xl border border-slate-200">
                   <div>
-                    <span className="text-slate-400 block">Bound Service:</span>
-                    <span className="font-semibold text-slate-800">{selectedLicense.serviceName}</span>
+                    <span className="text-slate-400 block">{t('licenses.boundService')}</span>
+                    <span className="font-semibold text-slate-800">{localizeServiceName(selectedLicense.serviceName, dict)}</span>
                   </div>
                   <div>
-                    <span className="text-slate-400 block">Package Tier:</span>
-                    <span className="font-semibold text-slate-800">{selectedLicense.packageName}</span>
+                    <span className="text-slate-400 block">{t('licenses.packageTier')}</span>
+                    <span className="font-semibold text-slate-800">{localizePackageName(selectedLicense.packageName, dict)}</span>
                   </div>
                   <div>
-                    <span className="text-slate-400 block">Allocated Quota:</span>
-                    <span className="font-semibold text-blue-600">{formatNumber(selectedLicense.quota)} pages</span>
+                    <span className="text-slate-400 block">{t('licenses.allocatedQuota')}</span>
+                    <span className="font-semibold text-blue-600">{formatNumber(selectedLicense.quota)} {t('common.pages')}</span>
                   </div>
                   <div>
-                    <span className="text-slate-400 block">Quota Consumed:</span>
-                    <span className="font-semibold text-slate-800">{formatNumber(selectedLicense.usedQuota)} pages</span>
+                    <span className="text-slate-400 block">{t('licenses.quotaConsumed')}</span>
+                    <span className="font-semibold text-slate-800">{formatNumber(selectedLicense.usedQuota)} {t('common.pages')}</span>
                   </div>
                   <div>
-                    <span className="text-slate-400 block">Active Since:</span>
+                    <span className="text-slate-400 block">{t('licenses.activeSince')}</span>
                     <span className="font-semibold text-slate-800">{formatDate(selectedLicense.startDate)}</span>
                   </div>
                   <div>
-                    <span className="text-slate-400 block">Valid Until:</span>
+                    <span className="text-slate-400 block">{t('licenses.validUntil')}</span>
                     <span className="font-semibold text-slate-800">{formatDate(selectedLicense.expirationDate)}</span>
                   </div>
                 </div>
 
                 {/* Audit History */}
                 <div>
-                  <h4 className="font-bold text-slate-800 mb-2">License Lifecycle History</h4>
+                  <h4 className="font-bold text-slate-800 mb-2">{t('licenses.lifecycleHistory')}</h4>
                   <div className="space-y-2 border border-slate-200 rounded-lg p-3 bg-white max-h-48 overflow-y-auto">
                     {selectedLicense.history.map((h) => (
                       <div key={h.id} className="text-xs border-b border-slate-100 last:border-0 pb-2 last:pb-0">
@@ -405,7 +407,7 @@ export const LicensesPage: React.FC = () => {
                           <span>{h.timestamp}</span>
                         </div>
                         <p className="text-slate-600 mt-0.5">{h.notes}</p>
-                        <span className="text-[10px] text-slate-400">Actor: {h.actor}</span>
+                        <span className="text-[10px] text-slate-400">{t('common.actor')}: {h.actor}</span>
                       </div>
                     ))}
                   </div>
@@ -414,22 +416,21 @@ export const LicensesPage: React.FC = () => {
             ) : (
               /* API Credentials Tab */
               <div className="space-y-4">
-                {/* Generation Banner if newly created */}
                 {generatedKey && (
                   <div className="p-3.5 bg-emerald-50 border border-emerald-300 rounded-xl space-y-2">
                     <div className="flex items-center gap-2 text-emerald-800 font-semibold text-xs">
                       <Sparkles className="h-4 w-4 text-emerald-600" />
-                      <span>New API Secret Generated Successfully!</span>
+                      <span>{t('licenses.newSecretBanner')}</span>
                     </div>
                     <p className="text-[11px] text-emerald-700">
-                      Copy this secret immediately. For security, it will <strong>never be shown again</strong>:
+                      {t('licenses.copySecretWarning')}
                     </p>
                     <div className="flex items-center justify-between bg-white px-3 py-2 rounded-lg border border-emerald-200 font-mono text-xs">
                       <span className="text-emerald-900 select-all font-bold break-all">{generatedKey}</span>
                       <button
                         onClick={() => handleCopyKey(generatedKey, 'new-api-key')}
                         className="ml-2 text-slate-500 hover:text-emerald-700"
-                        title="Copy API Secret"
+                        title={t('licenses.copySecretTitle')}
                       >
                         {copiedKey === 'new-api-key' ? (
                           <Check className="h-4 w-4 text-emerald-600" />
@@ -441,19 +442,18 @@ export const LicensesPage: React.FC = () => {
                   </div>
                 )}
 
-                {/* Create Credential Form */}
                 <form onSubmit={handleCreateCredential} className="flex gap-2">
                   <input
                     type="text"
                     required
-                    placeholder="Credential Name (e.g. Production Backend Ingestion)"
+                    placeholder={t('licenses.credNamePlaceholder')}
                     value={newCredName}
                     onChange={(e) => setNewCredName(e.target.value)}
                     className="flex-1 text-xs border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500"
                   />
                   <Button type="submit" disabled={credLoading} variant="primary" size="sm">
                     <PlusCircle className="h-3.5 w-3.5 mr-1" />
-                    {credLoading ? 'Generating...' : 'Generate API Key'}
+                    {credLoading ? t('licenses.generating') : t('licenses.generateApiKey')}
                   </Button>
                 </form>
 
@@ -463,16 +463,15 @@ export const LicensesPage: React.FC = () => {
                   </div>
                 )}
 
-                {/* Existing Credentials Table */}
                 <div className="border border-slate-200 rounded-xl overflow-hidden">
                   <table className="w-full text-left text-xs">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold">
-                        <th className="py-2.5 px-3">Credential Name</th>
-                        <th className="py-2.5 px-3">Masked Secret</th>
-                        <th className="py-2.5 px-3">Last Used</th>
-                        <th className="py-2.5 px-3">Status</th>
-                        <th className="py-2.5 px-3 text-right">Actions</th>
+                        <th className="py-2.5 px-3">{t('licenses.colCredName')}</th>
+                        <th className="py-2.5 px-3">{t('licenses.colMaskedSecret')}</th>
+                        <th className="py-2.5 px-3">{t('licenses.colLastUsed')}</th>
+                        <th className="py-2.5 px-3">{t('common.status')}</th>
+                        <th className="py-2.5 px-3 text-right">{t('common.actions')}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -482,13 +481,13 @@ export const LicensesPage: React.FC = () => {
                             <td className="py-2 px-3 font-semibold text-slate-800">{c.name}</td>
                             <td className="py-2 px-3 font-mono text-slate-600">{c.masked_key}</td>
                             <td className="py-2 px-3 text-slate-500">
-                              {c.last_used_at ? formatDateTime(c.last_used_at) : 'Never'}
+                              {c.last_used_at ? formatDateTime(c.last_used_at) : t('common.never')}
                             </td>
                             <td className="py-2 px-3">
                               {c.status === 'active' ? (
-                                <Badge variant="success" size="sm">Active</Badge>
+                                <Badge variant="success" size="sm">{t('common.statuses.active')}</Badge>
                               ) : (
-                                <Badge variant="danger" size="sm">Revoked</Badge>
+                                <Badge variant="danger" size="sm">{t('common.statuses.revoked')}</Badge>
                               )}
                             </td>
                             <td className="py-2 px-3 text-right">
@@ -500,7 +499,7 @@ export const LicensesPage: React.FC = () => {
                                   className="text-red-600 hover:bg-red-50 hover:border-red-300"
                                 >
                                   <Trash2 className="h-3 w-3 mr-1" />
-                                  Revoke
+                                  {t('licenses.revokeBtn')}
                                 </Button>
                               )}
                             </td>
@@ -509,7 +508,7 @@ export const LicensesPage: React.FC = () => {
                       ) : (
                         <tr>
                           <td colSpan={5} className="py-8 text-center text-slate-400">
-                            No API credentials created yet. Click Generate to issue your first developer key.
+                            {t('licenses.noCredentials')}
                           </td>
                         </tr>
                       )}
@@ -520,7 +519,7 @@ export const LicensesPage: React.FC = () => {
                 {/* External API Quick Reference */}
                 <div className="p-3.5 bg-slate-900 text-slate-200 rounded-xl space-y-2 text-[11px]">
                   <div className="flex items-center justify-between">
-                    <span className="font-semibold text-white">External OCR API Endpoint (JSON + Web History)</span>
+                    <span className="font-semibold text-white">{t('licenses.externalEndpointTitle')}</span>
                     <button
                       type="button"
                       onClick={() =>
@@ -532,7 +531,7 @@ export const LicensesPage: React.FC = () => {
                       className="text-slate-300 hover:text-white flex items-center gap-1"
                     >
                       {copiedKey === 'curl-snippet' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-                      <span>{copiedKey === 'curl-snippet' ? 'Copied' : 'Copy cURL'}</span>
+                      <span>{copiedKey === 'curl-snippet' ? t('licenses.copied') : t('licenses.copyCurl')}</span>
                     </button>
                   </div>
                   <pre className="font-mono text-emerald-400 overflow-x-auto whitespace-pre-wrap break-all">
@@ -546,7 +545,7 @@ export const LicensesPage: React.FC = () => {
 
             <div className="flex justify-end pt-2">
               <Button onClick={() => setIsDetailOpen(false)} variant="primary" size="sm">
-                Close
+                {t('common.close')}
               </Button>
             </div>
           </div>
@@ -558,21 +557,20 @@ export const LicensesPage: React.FC = () => {
         <Modal
           isOpen={isRenewModalOpen}
           onClose={() => setIsRenewModalOpen(false)}
-          title="Extend License Validity"
-          description={`Extend the expiration timestamp for ${selectedLicense.id}`}
+          title={t('licenses.renewModalTitle')}
+          description={t('licenses.renewModalDesc', { id: selectedLicense.id })}
         >
           <div className="space-y-4 text-xs">
             <p className="text-slate-600">
-              Extending this license will grant an additional <strong>6 months</strong> of validity to prevent service
-              interruption across your connected production clusters.
+              {t('licenses.renewModalBody')}
             </p>
             <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
               <div className="flex justify-between">
-                <span className="text-slate-500">Current Expiration:</span>
+                <span className="text-slate-500">{t('licenses.currentExpiration')}</span>
                 <span className="font-semibold">{formatDate(selectedLicense.expirationDate)}</span>
               </div>
               <div className="flex justify-between mt-1 text-emerald-600 font-semibold">
-                <span>New Expiration:</span>
+                <span>{t('licenses.newExpiration')}</span>
                 <span>
                   {formatDate(
                     new Date(new Date(selectedLicense.expirationDate).setMonth(new Date(selectedLicense.expirationDate).getMonth() + 6)).toISOString()
@@ -583,10 +581,10 @@ export const LicensesPage: React.FC = () => {
 
             <div className="flex justify-end gap-3 pt-2">
               <Button onClick={() => setIsRenewModalOpen(false)} variant="outline" size="sm">
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button onClick={handleConfirmRenew} variant="primary" size="sm">
-                Confirm Extension
+                {t('licenses.confirmExtension')}
               </Button>
             </div>
           </div>

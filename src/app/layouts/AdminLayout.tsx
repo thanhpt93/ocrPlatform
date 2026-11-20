@@ -24,10 +24,13 @@ import { usePlatformStore } from '@/stores/usePlatformStore';
 import { api } from '@/services/api/client';
 import { cn } from '@/utils/cn';
 import { Button } from '@/components/ui/button';
+import { LanguageSwitcher } from '@/components/common/LanguageSwitcher';
+import { useTranslation } from '@/i18n';
 
 export const AdminLayout: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { t } = useTranslation();
   const {
     searchQuery,
     setSearchQuery,
@@ -49,32 +52,32 @@ export const AdminLayout: React.FC = () => {
 
   const navSections = [
     {
-      title: 'Overview',
+      title: t('adminLayout.sections.overview'),
       items: [
-        { label: 'Admin Dashboard', path: '/admin/dashboard', icon: LayoutDashboard },
+        { label: t('adminLayout.nav.dashboard'), path: '/admin/dashboard', icon: LayoutDashboard },
       ],
     },
     {
-      title: 'Service Catalog',
+      title: t('adminLayout.sections.catalog'),
       items: [
-        { label: 'OCR Services', path: '/admin/services', icon: Layers },
-        { label: 'Document Types', path: '/admin/document-types', icon: FileCode },
+        { label: t('adminLayout.nav.services'), path: '/admin/services', icon: Layers },
+        { label: t('adminLayout.nav.documentTypes'), path: '/admin/document-types', icon: FileCode },
       ],
     },
     {
-      title: 'Monetization',
+      title: t('adminLayout.sections.monetization'),
       items: [
-        { label: 'Package Management', path: '/admin/packages', icon: Package },
-        { label: 'Customers', path: '/admin/customers', icon: Users },
-        { label: 'License Provisioning', path: '/admin/licenses', icon: KeyRound },
-        { label: 'Orders & Billing', path: '/admin/billing', icon: CreditCard },
+        { label: t('adminLayout.nav.packages'), path: '/admin/packages', icon: Package },
+        { label: t('adminLayout.nav.customers'), path: '/admin/customers', icon: Users },
+        { label: t('adminLayout.nav.licenses'), path: '/admin/licenses', icon: KeyRound },
+        { label: t('adminLayout.nav.billing'), path: '/admin/billing', icon: CreditCard },
       ],
     },
     {
-      title: 'Infrastructure & Ops',
+      title: t('adminLayout.sections.infra'),
       items: [
-        { label: 'OCR Monitoring & Models', path: '/admin/monitoring', icon: Activity },
-        { label: 'System Settings & Audit', path: '/admin/system', icon: Sliders },
+        { label: t('adminLayout.nav.monitoring'), path: '/admin/monitoring', icon: Activity },
+        { label: t('adminLayout.nav.system'), path: '/admin/system', icon: Sliders },
       ],
     },
   ];
@@ -101,16 +104,19 @@ export const AdminLayout: React.FC = () => {
 
   if (!isAdminAuthenticated) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 font-sans">
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 font-sans relative">
+        <div className="absolute top-5 right-6">
+          <LanguageSwitcher variant="dark" />
+        </div>
         <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center shadow-2xl space-y-4">
           <div className="inline-flex h-12 w-12 rounded-xl bg-amber-500/20 text-amber-400 items-center justify-center mx-auto border border-amber-500/30">
             <ShieldCheck className="h-6 w-6" />
           </div>
-          <h1 className="text-xl font-bold text-white">Platform Admin Authentication Required</h1>
+          <h1 className="text-xl font-bold text-white">{t('adminLayout.authRequiredTitle')}</h1>
           <p className="text-xs text-slate-400 leading-relaxed">
             {currentUser
-              ? `Signed in as ${currentUser.email} (${currentUser.role}). Administrator privileges (PLATFORM_ADMIN) are required to view real platform telemetry and customer records.`
-              : 'Please sign in with your administrator account to access live platform metrics, real registered customers, and license controls.'}
+              ? t('adminLayout.authRequiredSignedInDesc', { email: currentUser.email, role: currentUser.role })
+              : t('adminLayout.authRequiredGuestDesc')}
           </p>
           <div className="flex gap-3 pt-2">
             {currentUser && (
@@ -120,7 +126,7 @@ export const AdminLayout: React.FC = () => {
                 size="sm"
                 className="flex-1 bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700"
               >
-                Customer Portal
+                {t('common.customerPortal')}
               </Button>
             )}
             <Button
@@ -130,7 +136,7 @@ export const AdminLayout: React.FC = () => {
               className="flex-1 bg-amber-600 hover:bg-amber-500 text-white"
             >
               <LogIn className="h-4 w-4 mr-1.5" />
-              Sign In as Admin
+              {t('adminLayout.signInAsAdmin')}
             </Button>
           </div>
         </div>
@@ -162,7 +168,7 @@ export const AdminLayout: React.FC = () => {
                 ocr<span className="text-amber-400">Admin</span>
               </span>
               <span className="text-[10px] text-amber-300 block -mt-1 font-semibold tracking-wider uppercase">
-                Platform Operations
+                {t('adminLayout.brandSubtitle')}
               </span>
             </div>
           </div>
@@ -183,11 +189,15 @@ export const AdminLayout: React.FC = () => {
               />
             </span>
             <span className="text-[11px] font-medium text-slate-300 truncate">
-              VLM: {ollamaRunning ? 'Ollama Online' : 'Ollama Offline'}
+              {t('adminLayout.vlmStatus', {
+                status: ollamaRunning ? t('adminLayout.ollamaOnline') : t('adminLayout.ollamaOffline'),
+              })}
             </span>
           </div>
           <span className="text-[10px] text-slate-400 font-mono truncate max-w-[92px]" title={adminMonitoring?.active_model || ''}>
-            {adminMonitoring?.installed_models ? `${adminMonitoring.installed_models.length} models` : '...'}
+            {adminMonitoring?.installed_models
+              ? t('adminLayout.modelsCount', { count: adminMonitoring.installed_models.length })
+              : '...'}
           </span>
         </div>
 
@@ -237,7 +247,7 @@ export const AdminLayout: React.FC = () => {
             className="w-full bg-slate-900 hover:bg-slate-800 border-slate-700 text-slate-200 justify-center text-xs h-9"
           >
             <ArrowRightLeft className="h-3.5 w-3.5 mr-1.5 text-blue-400" />
-            Switch to Customer Portal
+            {t('adminLayout.switchToCustomer')}
           </Button>
         </div>
       </aside>
@@ -252,7 +262,7 @@ export const AdminLayout: React.FC = () => {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
               <input
                 type="text"
-                placeholder="Search customers, services, packages, licenses..."
+                placeholder={t('adminLayout.searchPlaceholder')}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full bg-slate-100 hover:bg-slate-100/80 focus:bg-white pl-9 pr-4 py-2 rounded-lg text-xs text-slate-800 placeholder-slate-400 border border-transparent focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 transition-all"
@@ -261,23 +271,25 @@ export const AdminLayout: React.FC = () => {
           </div>
 
           {/* Right Top Actions */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
+            <LanguageSwitcher variant="light" />
+
             <Button
               onClick={() => syncAdminData()}
               variant="outline"
               size="xs"
               disabled={adminLoading}
-              title="Refresh live data from backend"
+              title={t('adminLayout.syncTooltip')}
             >
               <RefreshCw className={cn('h-3.5 w-3.5 mr-1', adminLoading && 'animate-spin')} />
-              {adminLoading ? 'Syncing...' : 'Sync Live Data'}
+              {adminLoading ? t('common.syncing') : t('adminLayout.syncLiveData')}
             </Button>
 
             <div className="hidden md:flex items-center gap-2 px-2.5 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-semibold">
               <Server className="h-3.5 w-3.5 text-amber-600" />
               {adminMonitoring?.database_dialect
                 ? `DB: ${adminMonitoring.database_dialect.toUpperCase()}`
-                : 'Live Backend'}
+                : t('adminLayout.liveBackend')}
             </div>
 
             <div className="h-5 w-px bg-slate-200 mx-1" />
@@ -310,7 +322,7 @@ export const AdminLayout: React.FC = () => {
                       onClick={() => setShowAdminMenu(false)}
                       className="block px-4 py-2 text-xs text-slate-700 hover:bg-slate-50 transition-colors"
                     >
-                      System Configuration & Audits
+                      {t('adminLayout.systemConfigAudits')}
                     </NavLink>
                     <button
                       onClick={() => {
@@ -319,7 +331,7 @@ export const AdminLayout: React.FC = () => {
                       }}
                       className="w-full text-left px-4 py-2 text-xs text-blue-600 hover:bg-blue-50 font-medium transition-colors"
                     >
-                      Switch to Customer Portal
+                      {t('adminLayout.switchToCustomer')}
                     </button>
                     <div className="border-t border-slate-100 my-1" />
                     <button
@@ -327,7 +339,7 @@ export const AdminLayout: React.FC = () => {
                       className="w-full text-left px-4 py-2 text-xs text-red-600 hover:bg-red-50 font-medium flex items-center gap-1.5 transition-colors"
                     >
                       <LogOut className="h-3.5 w-3.5" />
-                      Sign Out
+                      {t('adminLayout.signOut')}
                     </button>
                   </div>
                 </div>

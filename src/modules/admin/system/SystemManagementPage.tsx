@@ -8,8 +8,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/form-controls';
 import { Modal } from '@/components/ui/modal';
+import { useTranslation } from '@/i18n';
 
 export const SystemManagementPage: React.FC = () => {
+  const { t, dict, intlLocale } = useTranslation();
   const { adminUsers, auditLogs, adminSystemConfig, createAdminOperator } = usePlatformStore();
 
   const [activeTab, setActiveTab] = useState('users');
@@ -20,10 +22,12 @@ export const SystemManagementPage: React.FC = () => {
   const [createError, setCreateError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const statusesMap = dict.common.statuses as Record<string, string>;
+
   const tabs = [
-    { id: 'users', label: 'Platform Administrators', count: adminUsers.length },
-    { id: 'config', label: 'Runtime Configuration' },
-    { id: 'audit', label: 'Security Audit Logs', count: auditLogs.length },
+    { id: 'users', label: t('adminSystem.tabUsers'), count: adminUsers.length },
+    { id: 'config', label: t('adminSystem.tabConfig') },
+    { id: 'audit', label: t('adminSystem.tabAudit'), count: auditLogs.length },
   ];
 
   const handleCreateOperator = async (e: React.FormEvent) => {
@@ -52,11 +56,14 @@ export const SystemManagementPage: React.FC = () => {
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <Breadcrumbs items={[{ label: 'Admin Portal', path: '/admin/dashboard' }, { label: 'System Management' }]} />
-          <h1 className="text-2xl font-bold text-slate-900 mt-1 tracking-tight">System & Governance</h1>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Real administrator accounts in database, active server configuration, and persisted audit logs.
-          </p>
+          <Breadcrumbs
+            items={[
+              { label: t('common.adminPortal'), path: '/admin/dashboard' },
+              { label: t('adminSystem.breadcrumbCurrent') },
+            ]}
+          />
+          <h1 className="text-2xl font-bold text-slate-900 mt-1 tracking-tight">{t('adminSystem.title')}</h1>
+          <p className="text-xs text-slate-500 mt-0.5">{t('adminSystem.subtitle')}</p>
         </div>
       </div>
 
@@ -68,8 +75,8 @@ export const SystemManagementPage: React.FC = () => {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-sm font-bold text-slate-900">Platform Administrators (PLATFORM_ADMIN)</h2>
-              <p className="text-xs text-slate-500">Real staff accounts authenticated against the database.</p>
+              <h2 className="text-sm font-bold text-slate-900">{t('adminSystem.adminsHeading')}</h2>
+              <p className="text-xs text-slate-500">{t('adminSystem.adminsSub')}</p>
             </div>
             <Button
               onClick={() => {
@@ -81,7 +88,7 @@ export const SystemManagementPage: React.FC = () => {
               className="bg-amber-600 hover:bg-amber-700"
             >
               <Plus className="h-4 w-4 mr-1" />
-              Add Administrator
+              {t('adminSystem.addAdminBtn')}
             </Button>
           </div>
 
@@ -91,18 +98,18 @@ export const SystemManagementPage: React.FC = () => {
                 <table className="w-full text-left border-collapse text-xs">
                   <thead>
                     <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 font-semibold uppercase tracking-wider">
-                      <th className="py-3 px-4">Operator Name</th>
-                      <th className="py-3 px-4">Email</th>
-                      <th className="py-3 px-4">Role</th>
-                      <th className="py-3 px-4">Created At</th>
-                      <th className="py-3 px-4">Status</th>
+                      <th className="py-3 px-4">{t('adminSystem.colOperatorName')}</th>
+                      <th className="py-3 px-4">{t('adminSystem.colEmail')}</th>
+                      <th className="py-3 px-4">{t('adminSystem.colRole')}</th>
+                      <th className="py-3 px-4">{t('adminSystem.colCreatedAt')}</th>
+                      <th className="py-3 px-4">{t('common.status')}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {adminUsers.length === 0 ? (
                       <tr>
                         <td colSpan={5} className="py-8 text-center text-slate-400">
-                          No administrator accounts loaded.
+                          {t('adminSystem.emptyAdmins')}
                         </td>
                       </tr>
                     ) : (
@@ -116,11 +123,11 @@ export const SystemManagementPage: React.FC = () => {
                             </span>
                           </td>
                           <td className="py-3 px-4 text-slate-500">
-                            {u.createdAt ? new Date(u.createdAt).toLocaleString() : u.lastLogin}
+                            {u.createdAt ? new Date(u.createdAt).toLocaleString(intlLocale) : u.lastLogin}
                           </td>
                           <td className="py-3 px-4">
-                            <Badge variant={u.status === 'active' ? 'success' : 'danger'} size="sm" className="capitalize">
-                              {u.status}
+                            <Badge variant={u.status === 'active' ? 'success' : 'danger'} size="sm">
+                              {statusesMap[u.status] || u.status}
                             </Badge>
                           </td>
                         </tr>
@@ -139,32 +146,32 @@ export const SystemManagementPage: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl">
           <Card>
             <CardHeader>
-              <CardTitle>VLM & Inference Runtime Settings</CardTitle>
-              <CardDescription>Live configuration loaded from backend environment (`settings`)</CardDescription>
+              <CardTitle>{t('adminSystem.vlmSettingsTitle')}</CardTitle>
+              <CardDescription>{t('adminSystem.vlmSettingsDesc')}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3 text-xs">
               <div className="flex justify-between py-2 border-b border-slate-100">
-                <span className="text-slate-500">Ollama Base URL</span>
+                <span className="text-slate-500">{t('adminSystem.ollamaUrl')}</span>
                 <span className="font-mono font-semibold text-slate-900">{adminSystemConfig?.ollama_base_url || '—'}</span>
               </div>
               <div className="flex justify-between py-2 border-b border-slate-100">
-                <span className="text-slate-500">Default VLM Model</span>
+                <span className="text-slate-500">{t('adminSystem.defaultVlm')}</span>
                 <span className="font-mono font-semibold text-amber-700">{adminSystemConfig?.ollama_model || '—'}</span>
               </div>
               <div className="flex justify-between py-2 border-b border-slate-100">
-                <span className="text-slate-500">Context Window (num_ctx)</span>
+                <span className="text-slate-500">{t('adminSystem.contextWindow')}</span>
                 <span className="font-mono font-semibold text-slate-900">{adminSystemConfig?.ollama_num_ctx ?? '—'}</span>
               </div>
               <div className="flex justify-between py-2 border-b border-slate-100">
-                <span className="text-slate-500">Max Output Tokens (num_predict)</span>
+                <span className="text-slate-500">{t('adminSystem.maxTokens')}</span>
                 <span className="font-mono font-semibold text-slate-900">{adminSystemConfig?.ollama_num_predict ?? '—'}</span>
               </div>
               <div className="flex justify-between py-2 border-b border-slate-100">
-                <span className="text-slate-500">Ollama Request Timeout</span>
+                <span className="text-slate-500">{t('adminSystem.requestTimeout')}</span>
                 <span className="font-mono font-semibold text-slate-900">{adminSystemConfig?.ollama_timeout_seconds ?? '—'}s</span>
               </div>
               <div className="flex justify-between py-2">
-                <span className="text-slate-500">Max VLM Image Dimension</span>
+                <span className="text-slate-500">{t('adminSystem.maxImageDim')}</span>
                 <span className="font-mono font-semibold text-slate-900">{adminSystemConfig?.vlm_max_image_dimension ?? '—'} px</span>
               </div>
             </CardContent>
@@ -172,21 +179,29 @@ export const SystemManagementPage: React.FC = () => {
 
           <Card>
             <CardHeader>
-              <CardTitle>Persistence & Auth Security Settings</CardTitle>
-              <CardDescription>Active backend storage & JWT token lifetimes</CardDescription>
+              <CardTitle>{t('adminSystem.securitySettingsTitle')}</CardTitle>
+              <CardDescription>{t('adminSystem.securitySettingsDesc')}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3 text-xs">
               <div className="flex justify-between py-2 border-b border-slate-100">
-                <span className="text-slate-500">Database Engine</span>
+                <span className="text-slate-500">{t('adminSystem.dbEngine')}</span>
                 <span className="font-mono font-semibold uppercase text-slate-900">{adminSystemConfig?.database_backend || '—'}</span>
               </div>
               <div className="flex justify-between py-2 border-b border-slate-100">
-                <span className="text-slate-500">Access Token Lifetime</span>
-                <span className="font-mono font-semibold text-slate-900">{adminSystemConfig?.access_token_expire_minutes ?? '—'} minutes</span>
+                <span className="text-slate-500">{t('adminSystem.accessLifetime')}</span>
+                <span className="font-mono font-semibold text-slate-900">
+                  {adminSystemConfig?.access_token_expire_minutes !== undefined
+                    ? t('adminSystem.minutesUnit', { val: adminSystemConfig.access_token_expire_minutes })
+                    : '—'}
+                </span>
               </div>
               <div className="flex justify-between py-2">
-                <span className="text-slate-500">Refresh Token Lifetime</span>
-                <span className="font-mono font-semibold text-slate-900">{adminSystemConfig?.refresh_token_expire_days ?? '—'} days</span>
+                <span className="text-slate-500">{t('adminSystem.refreshLifetime')}</span>
+                <span className="font-mono font-semibold text-slate-900">
+                  {adminSystemConfig?.refresh_token_expire_days !== undefined
+                    ? t('adminSystem.daysUnit', { val: adminSystemConfig.refresh_token_expire_days })
+                    : '—'}
+                </span>
               </div>
             </CardContent>
           </Card>
@@ -197,28 +212,28 @@ export const SystemManagementPage: React.FC = () => {
       {activeTab === 'audit' && (
         <Card>
           <CardHeader>
-            <CardTitle>Platform Audit Trails</CardTitle>
-            <CardDescription>Real operational changes, registrations, and administrative events from database</CardDescription>
+            <CardTitle>{t('adminSystem.auditTrailsTitle')}</CardTitle>
+            <CardDescription>{t('adminSystem.auditTrailsDesc')}</CardDescription>
           </CardHeader>
           <CardContent className="p-0">
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 font-semibold uppercase tracking-wider">
-                    <th className="py-3 px-4">Timestamp</th>
-                    <th className="py-3 px-4">Actor</th>
-                    <th className="py-3 px-4">Action</th>
-                    <th className="py-3 px-4">Resource</th>
-                    <th className="py-3 px-4">IP Address</th>
-                    <th className="py-3 px-4">Details</th>
-                    <th className="py-3 px-4">Severity</th>
+                    <th className="py-3 px-4">{t('adminSystem.colTimestamp')}</th>
+                    <th className="py-3 px-4">{t('adminSystem.colActor')}</th>
+                    <th className="py-3 px-4">{t('adminSystem.colAction')}</th>
+                    <th className="py-3 px-4">{t('adminSystem.colResource')}</th>
+                    <th className="py-3 px-4">{t('adminSystem.colIp')}</th>
+                    <th className="py-3 px-4">{t('adminSystem.colDetails')}</th>
+                    <th className="py-3 px-4">{t('adminSystem.colSeverity')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {auditLogs.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="py-10 text-center text-slate-400">
-                        No audit log events recorded yet. Administrative actions and registrations will appear here automatically.
+                        {t('adminSystem.emptyAudit')}
                       </td>
                     </tr>
                   ) : (
@@ -252,8 +267,8 @@ export const SystemManagementPage: React.FC = () => {
       <Modal
         isOpen={isInviteOpen}
         onClose={() => setIsInviteOpen(false)}
-        title="Create Platform Administrator"
-        description="Provision a real PLATFORM_ADMIN user account in the database"
+        title={t('adminSystem.createAdminTitle')}
+        description={t('adminSystem.createAdminDesc')}
       >
         <form onSubmit={handleCreateOperator} className="space-y-4">
           {createError && (
@@ -264,14 +279,14 @@ export const SystemManagementPage: React.FC = () => {
           )}
 
           <Input
-            label="Full Name"
+            label={t('adminSystem.fullNameLabel')}
             placeholder="e.g. Operations Lead"
             value={newAdminName}
             onChange={(e) => setNewAdminName(e.target.value)}
             required
           />
           <Input
-            label="Email Address"
+            label={t('adminSystem.emailLabel')}
             type="email"
             placeholder="operator@ocrplatform.com"
             value={newAdminEmail}
@@ -279,7 +294,7 @@ export const SystemManagementPage: React.FC = () => {
             required
           />
           <Input
-            label="Initial Password (min 6 characters)"
+            label={t('adminSystem.passwordLabel')}
             type="password"
             minLength={6}
             value={newAdminPassword}
@@ -289,7 +304,7 @@ export const SystemManagementPage: React.FC = () => {
 
           <div className="flex justify-end gap-3 pt-2">
             <Button type="button" onClick={() => setIsInviteOpen(false)} variant="outline" size="sm">
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button
               type="submit"
@@ -298,7 +313,7 @@ export const SystemManagementPage: React.FC = () => {
               size="sm"
               className="bg-amber-600 hover:bg-amber-700"
             >
-              {submitting ? 'Creating...' : 'Create Administrator'}
+              {submitting ? t('common.creating') : t('adminSystem.createAdminSubmit')}
             </Button>
           </div>
         </form>

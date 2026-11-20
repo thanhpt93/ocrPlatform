@@ -5,9 +5,12 @@ import { authApi } from '@/services/api/endpoints';
 import { api } from '@/services/api/client';
 import { usePlatformStore } from '@/stores/usePlatformStore';
 import { Button } from '@/components/ui/button';
+import { LanguageSwitcher } from '@/components/common/LanguageSwitcher';
+import { useTranslation } from '@/i18n';
 
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const { syncWithBackend } = usePlatformStore();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -54,14 +57,18 @@ export const LoginPage: React.FC = () => {
         navigate('/app/dashboard');
       }
     } catch (err: any) {
-      setError(err?.message || 'Login failed. Please verify your credentials.');
+      setError(err?.message || t('auth.loginFailed'));
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-slate-900 flex flex-col justify-center py-12 sm:px-6 lg:px-8 relative">
+      <div className="absolute top-5 right-6">
+        <LanguageSwitcher variant="dark" />
+      </div>
+
       <div className="sm:mx-auto sm:w-full sm:max-w-md text-center">
         <div className="inline-flex h-12 w-12 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 items-center justify-center text-white shadow-lg shadow-blue-500/30 mb-4">
           <Sparkles className="h-6 w-6" />
@@ -70,7 +77,7 @@ export const LoginPage: React.FC = () => {
           ocr<span className="text-blue-400">Platform</span>
         </h2>
         <p className="mt-2 text-xs text-slate-400">
-          Sign in to your account to access OCR microservices, API licenses & platform controls
+          {t('auth.loginSubtitle')}
         </p>
       </div>
 
@@ -86,7 +93,7 @@ export const LoginPage: React.FC = () => {
           <form className="space-y-4" onSubmit={handleSubmit}>
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Email Address
+                {t('auth.emailLabel')}
               </label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -95,7 +102,7 @@ export const LoginPage: React.FC = () => {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="name@company.com"
+                  placeholder={t('auth.emailPlaceholder')}
                   className="w-full bg-slate-900/80 border border-slate-700 text-white rounded-lg pl-9 pr-3 py-2 text-xs focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 placeholder-slate-500"
                 />
               </div>
@@ -103,7 +110,7 @@ export const LoginPage: React.FC = () => {
 
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Password
+                {t('auth.passwordLabel')}
               </label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -125,16 +132,16 @@ export const LoginPage: React.FC = () => {
                 variant="primary"
                 className="w-full justify-center py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md shadow-blue-600/30"
               >
-                {loading ? 'Authenticating...' : 'Sign In'}
+                {loading ? t('auth.authenticating') : t('auth.signIn')}
                 <ArrowRight className="h-4 w-4 ml-1.5" />
               </Button>
             </div>
           </form>
 
           <div className="mt-6 pt-5 border-t border-slate-700/60 text-center text-xs text-slate-400">
-            <span>Don't have an account yet? </span>
+            <span>{t('auth.noAccountYet')} </span>
             <Link to="/register" className="text-blue-400 hover:text-blue-300 font-semibold underline underline-offset-2">
-              Create an account
+              {t('auth.createAccountLink')}
             </Link>
           </div>
         </div>

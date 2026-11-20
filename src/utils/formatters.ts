@@ -1,19 +1,22 @@
+import { getIntlLocale, translate, getCurrentLang } from '@/i18n';
+
 export function formatNumber(num: number): string {
-  return new Intl.NumberFormat('en-US').format(num);
+  return new Intl.NumberFormat(getIntlLocale()).format(num);
 }
 
 export function formatCurrency(amount: number, currency: 'USD' | 'VND' = 'USD'): string {
   if (currency === 'VND') {
     return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(amount);
   }
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
+  return new Intl.NumberFormat(getIntlLocale(), { style: 'currency', currency: 'USD' }).format(amount);
 }
 
 export function formatDate(dateString: string): string {
-  if (!dateString) return 'N/A';
+  if (!dateString) return translate(getCurrentLang(), 'common.na');
   try {
     const d = new Date(dateString);
-    return d.toLocaleDateString('en-US', {
+    if (Number.isNaN(d.getTime())) return dateString;
+    return d.toLocaleDateString(getIntlLocale(), {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
@@ -24,10 +27,11 @@ export function formatDate(dateString: string): string {
 }
 
 export function formatDateTime(dateString: string): string {
-  if (!dateString) return 'N/A';
+  if (!dateString) return translate(getCurrentLang(), 'common.na');
   try {
     const d = new Date(dateString);
-    return d.toLocaleString('en-US', {
+    if (Number.isNaN(d.getTime())) return dateString;
+    return d.toLocaleString(getIntlLocale(), {
       year: 'numeric',
       month: 'short',
       day: 'numeric',

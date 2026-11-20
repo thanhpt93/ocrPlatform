@@ -9,8 +9,10 @@ import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { Order, Payment } from '@/types';
 import { formatCurrency, formatDate, formatNumber } from '@/utils/formatters';
+import { useTranslation } from '@/i18n';
 
 export const AdminBillingPage: React.FC = () => {
+  const { t, dict } = useTranslation();
   const { orders, payments, subscriptions } = usePlatformStore();
 
   const [activeTab, setActiveTab] = useState('orders');
@@ -20,10 +22,12 @@ export const AdminBillingPage: React.FC = () => {
   const [isOrderDetailOpen, setIsOrderDetailOpen] = useState(false);
   const [isPaymentDetailOpen, setIsPaymentDetailOpen] = useState(false);
 
+  const statusesMap = dict.common.statuses as Record<string, string>;
+
   const tabs = [
-    { id: 'orders', label: 'Customer Orders', count: orders.length },
-    { id: 'payments', label: 'Payment Transactions', count: payments.length },
-    { id: 'subscriptions', label: 'Subscriptions', count: subscriptions.length },
+    { id: 'orders', label: t('adminBilling.tabOrders'), count: orders.length },
+    { id: 'payments', label: t('adminBilling.tabPayments'), count: payments.length },
+    { id: 'subscriptions', label: t('adminBilling.tabSubs'), count: subscriptions.length },
   ];
 
   const q = search.toLowerCase();
@@ -71,11 +75,14 @@ export const AdminBillingPage: React.FC = () => {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <Breadcrumbs items={[{ label: 'Admin Portal', path: '/admin/dashboard' }, { label: 'Order & Billing' }]} />
-          <h1 className="text-2xl font-bold text-slate-900 mt-1 tracking-tight">Orders, Payments & Subscriptions</h1>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Verified database orders, payment transaction records, and active tenant subscriptions.
-          </p>
+          <Breadcrumbs
+            items={[
+              { label: t('common.adminPortal'), path: '/admin/dashboard' },
+              { label: t('adminBilling.breadcrumbCurrent') },
+            ]}
+          />
+          <h1 className="text-2xl font-bold text-slate-900 mt-1 tracking-tight">{t('adminBilling.title')}</h1>
+          <p className="text-xs text-slate-500 mt-0.5">{t('adminBilling.subtitle')}</p>
         </div>
       </div>
 
@@ -88,7 +95,7 @@ export const AdminBillingPage: React.FC = () => {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <input
             type="text"
-            placeholder="Search order #, payment #, customer, package..."
+            placeholder={t('adminBilling.searchPlaceholder')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full bg-slate-50 pl-9 pr-4 py-1.5 rounded-lg text-xs text-slate-800 placeholder-slate-400 border border-slate-200 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
@@ -104,21 +111,21 @@ export const AdminBillingPage: React.FC = () => {
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 font-semibold uppercase tracking-wider">
-                    <th className="py-3 px-4">Order Number</th>
-                    <th className="py-3 px-4">Customer Account</th>
-                    <th className="py-3 px-4">Service & Package</th>
-                    <th className="py-3 px-4">Date</th>
-                    <th className="py-3 px-4">Amount</th>
-                    <th className="py-3 px-4">Payment Method</th>
-                    <th className="py-3 px-4">Status</th>
-                    <th className="py-3 px-4 text-right">Actions</th>
+                    <th className="py-3 px-4">{t('adminBilling.colOrderNum')}</th>
+                    <th className="py-3 px-4">{t('adminBilling.colCustomer')}</th>
+                    <th className="py-3 px-4">{t('adminBilling.colServicePkg')}</th>
+                    <th className="py-3 px-4">{t('adminBilling.colDate')}</th>
+                    <th className="py-3 px-4">{t('adminBilling.colAmount')}</th>
+                    <th className="py-3 px-4">{t('adminBilling.colMethod')}</th>
+                    <th className="py-3 px-4">{t('common.status')}</th>
+                    <th className="py-3 px-4 text-right">{t('common.actions')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {filteredOrders.length === 0 ? (
                     <tr>
                       <td colSpan={8} className="py-10 text-center text-slate-400">
-                        No orders found.
+                        {t('adminBilling.emptyOrders')}
                       </td>
                     </tr>
                   ) : (
@@ -137,8 +144,8 @@ export const AdminBillingPage: React.FC = () => {
                         <td className="py-3.5 px-4 font-bold text-slate-900">{formatCurrency(o.amount, o.currency)}</td>
                         <td className="py-3.5 px-4 text-slate-600">{o.paymentMethod}</td>
                         <td className="py-3.5 px-4">
-                          <Badge variant={orderStatusVariant(o.status)} size="sm" className="capitalize">
-                            {o.status}
+                          <Badge variant={orderStatusVariant(o.status)} size="sm">
+                            {statusesMap[o.status] || o.status}
                           </Badge>
                         </td>
                         <td className="py-3.5 px-4 text-right">
@@ -150,7 +157,7 @@ export const AdminBillingPage: React.FC = () => {
                             variant="outline"
                             size="xs"
                           >
-                            <Eye className="h-3 w-3 mr-1" /> View Order
+                            <Eye className="h-3 w-3 mr-1" /> {t('adminBilling.viewOrder')}
                           </Button>
                         </td>
                       </tr>
@@ -171,21 +178,21 @@ export const AdminBillingPage: React.FC = () => {
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 font-semibold uppercase tracking-wider">
-                    <th className="py-3 px-4">Payment #</th>
-                    <th className="py-3 px-4">Order Ref</th>
-                    <th className="py-3 px-4">Customer Account</th>
-                    <th className="py-3 px-4">Amount</th>
-                    <th className="py-3 px-4">Method</th>
-                    <th className="py-3 px-4">Timestamp</th>
-                    <th className="py-3 px-4">Status</th>
-                    <th className="py-3 px-4 text-right">Actions</th>
+                    <th className="py-3 px-4">{t('adminBilling.colPaymentNum')}</th>
+                    <th className="py-3 px-4">{t('adminBilling.colOrderRef')}</th>
+                    <th className="py-3 px-4">{t('adminBilling.colCustomer')}</th>
+                    <th className="py-3 px-4">{t('adminBilling.colAmount')}</th>
+                    <th className="py-3 px-4">{t('adminBilling.colMethod')}</th>
+                    <th className="py-3 px-4">{t('adminBilling.colTimestamp')}</th>
+                    <th className="py-3 px-4">{t('common.status')}</th>
+                    <th className="py-3 px-4 text-right">{t('common.actions')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {filteredPayments.length === 0 ? (
                     <tr>
                       <td colSpan={8} className="py-10 text-center text-slate-400">
-                        No payment transactions recorded.
+                        {t('adminBilling.emptyPayments')}
                       </td>
                     </tr>
                   ) : (
@@ -199,10 +206,10 @@ export const AdminBillingPage: React.FC = () => {
                         </td>
                         <td className="py-3.5 px-4 font-bold text-slate-900">{formatCurrency(p.amount, p.currency)}</td>
                         <td className="py-3.5 px-4 text-slate-600">{p.method}</td>
-                        <td className="py-3.5 px-4 text-slate-500 font-mono text-[11px]">{p.date}</td>
+                        <td className="py-3.5 px-4 text-slate-500 font-mono text-[11px]">{formatDate(p.date)}</td>
                         <td className="py-3.5 px-4">
-                          <Badge variant={paymentStatusVariant(p.status)} size="sm" className="capitalize">
-                            {p.status}
+                          <Badge variant={paymentStatusVariant(p.status)} size="sm">
+                            {statusesMap[p.status] || p.status}
                           </Badge>
                         </td>
                         <td className="py-3.5 px-4 text-right">
@@ -214,7 +221,7 @@ export const AdminBillingPage: React.FC = () => {
                             variant="outline"
                             size="xs"
                           >
-                            <Eye className="h-3 w-3 mr-1" /> Details
+                            <Eye className="h-3 w-3 mr-1" /> {t('common.details')}
                           </Button>
                         </td>
                       </tr>
@@ -235,20 +242,20 @@ export const AdminBillingPage: React.FC = () => {
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 font-semibold uppercase tracking-wider">
-                    <th className="py-3 px-4">Subscription ID</th>
-                    <th className="py-3 px-4">Customer Account</th>
-                    <th className="py-3 px-4">Service & Package</th>
-                    <th className="py-3 px-4">Quota Used</th>
-                    <th className="py-3 px-4">Period</th>
-                    <th className="py-3 px-4">Price</th>
-                    <th className="py-3 px-4">Status</th>
+                    <th className="py-3 px-4">{t('adminBilling.colSubId')}</th>
+                    <th className="py-3 px-4">{t('adminBilling.colCustomer')}</th>
+                    <th className="py-3 px-4">{t('adminBilling.colServicePkg')}</th>
+                    <th className="py-3 px-4">{t('adminBilling.colQuotaUsed')}</th>
+                    <th className="py-3 px-4">{t('adminBilling.colPeriod')}</th>
+                    <th className="py-3 px-4">{t('adminBilling.colPrice')}</th>
+                    <th className="py-3 px-4">{t('common.status')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {filteredSubscriptions.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="py-10 text-center text-slate-400">
-                        No subscriptions found.
+                        {t('adminBilling.emptySubs')}
                       </td>
                     </tr>
                   ) : (
@@ -271,8 +278,8 @@ export const AdminBillingPage: React.FC = () => {
                         </td>
                         <td className="py-3.5 px-4 font-bold text-slate-900">{formatCurrency(s.price)}</td>
                         <td className="py-3.5 px-4">
-                          <Badge variant={s.status === 'active' ? 'success' : 'warning'} size="sm" className="capitalize">
-                            {s.status}
+                          <Badge variant={s.status === 'active' ? 'success' : 'warning'} size="sm">
+                            {statusesMap[s.status] || s.status}
                           </Badge>
                         </td>
                       </tr>
@@ -290,50 +297,52 @@ export const AdminBillingPage: React.FC = () => {
         <Modal
           isOpen={isOrderDetailOpen}
           onClose={() => setIsOrderDetailOpen(false)}
-          title={`Order Inspection: ${selectedOrder.orderNumber}`}
-          description="Real database order record"
+          title={t('adminBilling.orderInspectTitle', { orderNumber: selectedOrder.orderNumber })}
+          description={t('adminBilling.orderInspectDesc')}
         >
           <div className="space-y-4 text-xs">
             <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
               <div className="flex justify-between">
-                <span className="text-slate-500">Customer:</span>
+                <span className="text-slate-500">{t('adminLicenses.customerLabel')}</span>
                 <span className="font-semibold text-slate-800">{selectedOrder.customerName}</span>
               </div>
               {selectedOrder.customerEmail && (
                 <div className="flex justify-between">
-                  <span className="text-slate-500">Email:</span>
+                  <span className="text-slate-500">{t('adminCustomers.emailLabel')}</span>
                   <span className="font-mono text-slate-700">{selectedOrder.customerEmail}</span>
                 </div>
               )}
               <div className="flex justify-between">
-                <span className="text-slate-500">Service:</span>
+                <span className="text-slate-500">{t('billing.serviceLabel')}</span>
                 <span className="font-semibold text-slate-800">{selectedOrder.serviceName}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Package:</span>
+                <span className="text-slate-500">{t('billing.packageVersionLabel')}</span>
                 <span className="font-semibold text-slate-800">{selectedOrder.packageName}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Date:</span>
+                <span className="text-slate-500">{t('billing.orderDateLabel')}</span>
                 <span className="font-semibold text-slate-800">{formatDate(selectedOrder.date)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Payment Channel:</span>
+                <span className="text-slate-500">{t('billing.paymentChannelLabel')}</span>
                 <span className="font-semibold text-slate-800">{selectedOrder.paymentMethod}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Status:</span>
-                <span className="font-semibold capitalize text-slate-800">{selectedOrder.status}</span>
+                <span className="text-slate-500">{t('billing.statusLabel')}</span>
+                <span className="font-semibold text-slate-800">
+                  {statusesMap[selectedOrder.status] || selectedOrder.status}
+                </span>
               </div>
               <div className="pt-2 border-t border-slate-200 flex justify-between text-sm font-bold">
-                <span>Amount:</span>
+                <span>{t('billing.totalAmountLabel')}</span>
                 <span className="text-amber-600">{formatCurrency(selectedOrder.amount, selectedOrder.currency)}</span>
               </div>
             </div>
 
             <div className="flex justify-end pt-2">
               <Button onClick={() => setIsOrderDetailOpen(false)} variant="primary" size="sm" className="bg-amber-600 hover:bg-amber-700">
-                Close
+                {t('common.close')}
               </Button>
             </div>
           </div>
@@ -345,37 +354,37 @@ export const AdminBillingPage: React.FC = () => {
         <Modal
           isOpen={isPaymentDetailOpen}
           onClose={() => setIsPaymentDetailOpen(false)}
-          title={`Payment Record: ${selectedPayment.paymentNumber}`}
-          description={`Order: ${selectedPayment.orderNumber}`}
+          title={t('adminBilling.paymentInspectTitle', { paymentNumber: selectedPayment.paymentNumber })}
+          description={t('adminBilling.paymentInspectDesc', { orderNumber: selectedPayment.orderNumber })}
         >
           <div className="space-y-4 text-xs">
             <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
               <div className="flex justify-between">
-                <span className="text-slate-500">Customer:</span>
+                <span className="text-slate-500">{t('adminLicenses.customerLabel')}</span>
                 <span className="font-semibold text-slate-800">{selectedPayment.customerName}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Method:</span>
+                <span className="text-slate-500">{t('billing.paymentChannelLabel')}</span>
                 <span className="font-semibold text-slate-800">{selectedPayment.method}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Transaction Ref:</span>
+                <span className="text-slate-500">{t('adminBilling.txRefLabel')}</span>
                 <span className="font-mono text-slate-700">{selectedPayment.transactionReference || '—'}</span>
               </div>
               {selectedPayment.failureReason && (
                 <div className="flex justify-between text-rose-600">
-                  <span>Failure Reason:</span>
+                  <span>{t('adminBilling.failureReasonLabel')}</span>
                   <span className="font-medium">{selectedPayment.failureReason}</span>
                 </div>
               )}
               <div className="pt-2 border-t border-slate-200 flex justify-between text-sm font-bold">
-                <span>Amount:</span>
+                <span>{t('billing.totalAmountLabel')}</span>
                 <span className="text-amber-600">{formatCurrency(selectedPayment.amount, selectedPayment.currency)}</span>
               </div>
             </div>
             <div className="flex justify-end pt-2">
               <Button onClick={() => setIsPaymentDetailOpen(false)} variant="primary" size="sm" className="bg-amber-600 hover:bg-amber-700">
-                Close
+                {t('common.close')}
               </Button>
             </div>
           </div>

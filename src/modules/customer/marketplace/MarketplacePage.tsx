@@ -2,11 +2,9 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Search,
-  Filter,
   CheckCircle2,
   FileCode2,
   Globe,
-  Sparkles,
   ArrowRight,
   Star,
   FileCheck,
@@ -17,9 +15,11 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { formatCurrency } from '@/utils/formatters';
+import { useTranslation, localizeService, localizeDocType, localizeCategory } from '@/i18n';
 
 export const MarketplacePage: React.FC = () => {
   const navigate = useNavigate();
+  const { t, dict } = useTranslation();
   const { services, docTypes, searchQuery } = usePlatformStore();
 
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
@@ -30,14 +30,23 @@ export const MarketplacePage: React.FC = () => {
     ...Array.from(new Set(services.map((s) => s.category).filter(Boolean))),
   ];
 
-  // Filter services
-  const query = (localSearch || searchQuery).toLowerCase();
+  // Filter services across raw and localized content
+  const query = (localSearch || searchQuery).trim().toLowerCase();
   const filteredServices = services.filter((s) => {
     const matchesCategory = selectedCategory === 'All' || s.category === selectedCategory;
+    if (!query) return matchesCategory;
+    const locService = localizeService(s, dict);
+    const docNames = docTypes
+      .filter((d) => s.supportedDocTypeIds.includes(d.id))
+      .flatMap((d) => [d.name, localizeDocType(d, dict).name]);
     const matchesQuery =
       s.name.toLowerCase().includes(query) ||
+      locService.name.toLowerCase().includes(query) ||
       s.description.toLowerCase().includes(query) ||
-      s.capabilities.some((c) => c.toLowerCase().includes(query));
+      locService.description.toLowerCase().includes(query) ||
+      s.capabilities.some((c) => c.toLowerCase().includes(query)) ||
+      locService.capabilities.some((c) => c.toLowerCase().includes(query)) ||
+      docNames.some((n) => n.toLowerCase().includes(query));
     return matchesCategory && matchesQuery;
   });
 
@@ -46,10 +55,10 @@ export const MarketplacePage: React.FC = () => {
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <Breadcrumbs items={[{ label: 'Customer Portal', path: '/app/dashboard' }, { label: 'OCR Marketplace' }]} />
-          <h1 className="text-2xl font-bold text-slate-900 mt-1 tracking-tight">OCR Service Marketplace</h1>
+          <Breadcrumbs items={[{ label: t('common.customerPortal'), path: '/app/dashboard' }, { label: t('marketplace.breadcrumbCurrent') }]} />
+          <h1 className="text-2xl font-bold text-slate-900 mt-1 tracking-tight">{t('marketplace.title')}</h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Discover pre-trained AI OCR microservices tailored for specific document workflows.
+            {t('marketplace.subtitle')}
           </p>
         </div>
       </div>
@@ -68,7 +77,7 @@ export const MarketplacePage: React.FC = () => {
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
-              {cat}
+              {localizeCategory(cat, dict)}
             </button>
           ))}
         </div>
@@ -78,7 +87,7 @@ export const MarketplacePage: React.FC = () => {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <input
             type="text"
-            placeholder="Search OCR models..."
+            placeholder={t('marketplace.searchPlaceholder')}
             value={localSearch}
             onChange={(e) => setLocalSearch(e.target.value)}
             className="w-full bg-slate-50 pl-9 pr-4 py-1.5 rounded-lg text-xs text-slate-800 placeholder-slate-400 border border-slate-200 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -90,16 +99,17 @@ export const MarketplacePage: React.FC = () => {
       {filteredServices.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center text-xs text-slate-500">
-            Không tìm thấy dịch vụ OCR phù hợp.
+            {t('marketplace.empty')}
           </CardContent>
         </Card>
       ) : (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredServices.map((service) => {
+          const locService = localizeService(service, dict);
           // Resolve supported doc types names
           const supportedDocs = docTypes
             .filter((d) => service.supportedDocTypeIds.includes(d.id))
-            .map((d) => d.name);
+            .map((d) => localizeDocType(d, dict).name);
 
           return (
             <Card
@@ -111,12 +121,12 @@ export const MarketplacePage: React.FC = () => {
                 <div className="relative h-44 w-full overflow-hidden bg-slate-100">
                   <img
                     src={service.thumbnail}
-                    alt={service.name}
+                    alt={locService.name}
                     className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-300"
                   />
                   <div className="absolute top-3 left-3 flex gap-2">
                     <Badge variant="slate" size="sm" className="bg-slate-900/80 text-white border-transparent">
-                      {service.category}
+                      {localizeCategory(service.category, dict)}
                     </Badge>
                   </div>
                   {service.reviewCount > 0 ? (
@@ -127,7 +137,7 @@ export const MarketplacePage: React.FC = () => {
                     </div>
                   ) : (
                     <div className="absolute top-3 right-3 bg-emerald-500/95 text-white px-2 py-0.5 rounded-md text-[10px] font-semibold shadow-xs">
-                      {service.sla || 'Live Engine'}
+                      {locService.sla || t('marketplace.liveEngine')}
                     </div>
                   )}
                 </div>
@@ -137,16 +147,16 @@ export const MarketplacePage: React.FC = () => {
                   <div>
                     <div className="text-[11px] font-mono font-medium text-blue-600 mb-0.5">{service.code}</div>
                     <h3 className="font-bold text-slate-900 text-base leading-snug group-hover:text-blue-600 transition-colors">
-                      {service.name}
+                      {locService.name}
                     </h3>
-                    <p className="text-xs text-slate-500 mt-1 line-clamp-2 leading-relaxed">{service.description}</p>
+                    <p className="text-xs text-slate-500 mt-1 line-clamp-2 leading-relaxed">{locService.description}</p>
                   </div>
 
                   {/* Supported Document Types */}
                   {supportedDocs.length > 0 && (
                     <div>
                       <p className="text-[10px] uppercase font-semibold text-slate-400 tracking-wider mb-1.5">
-                        Giấy tờ hỗ trợ ({supportedDocs.length})
+                        {t('marketplace.supportedDocsCount', { count: supportedDocs.length })}
                       </p>
                       <div className="flex flex-wrap gap-1">
                         {supportedDocs.map((docName, idx) => (
@@ -165,10 +175,10 @@ export const MarketplacePage: React.FC = () => {
                   {/* Capabilities Badges */}
                   <div>
                     <p className="text-[10px] uppercase font-semibold text-slate-400 tracking-wider mb-1.5">
-                      Key Capabilities
+                      {t('marketplace.keyCapabilities')}
                     </p>
                     <div className="flex flex-wrap gap-1">
-                      {service.capabilities.slice(0, 3).map((cap, i) => (
+                      {locService.capabilities.slice(0, 3).map((cap, i) => (
                         <span
                           key={i}
                           className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-100"
@@ -177,9 +187,9 @@ export const MarketplacePage: React.FC = () => {
                           {cap}
                         </span>
                       ))}
-                      {service.capabilities.length > 3 && (
+                      {locService.capabilities.length > 3 && (
                         <span className="px-1.5 py-0.5 rounded text-[11px] bg-slate-100 text-slate-500">
-                          +{service.capabilities.length - 3} more
+                          {t('marketplace.moreCapabilities', { count: locService.capabilities.length - 3 })}
                         </span>
                       )}
                     </div>
@@ -193,7 +203,7 @@ export const MarketplacePage: React.FC = () => {
                     </div>
                     <div className="flex items-center gap-1.5 truncate">
                       <Globe className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-                      <span className="truncate">{service.supportedLanguages.join(', ')}</span>
+                      <span className="truncate">{locService.supportedLanguages.join(', ')}</span>
                     </div>
                   </div>
                 </CardContent>
@@ -202,10 +212,10 @@ export const MarketplacePage: React.FC = () => {
               {/* Bottom Footer Price & Action */}
               <div className="p-5 pt-3 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between">
                 <div>
-                  <span className="text-[10px] text-slate-400 uppercase font-semibold block">Starting from</span>
+                  <span className="text-[10px] text-slate-400 uppercase font-semibold block">{t('marketplace.startingFrom')}</span>
                   <div className="text-base font-bold text-slate-900">
                     {formatCurrency(service.startingPrice)}
-                    <span className="text-xs font-normal text-slate-500">/mo</span>
+                    <span className="text-xs font-normal text-slate-500">{t('common.perMonth')}</span>
                   </div>
                 </div>
                 <Button
@@ -214,7 +224,7 @@ export const MarketplacePage: React.FC = () => {
                   size="sm"
                   className="shadow-xs"
                 >
-                  View Details
+                  {t('marketplace.viewDetails')}
                   <ArrowRight className="h-3.5 w-3.5 ml-1" />
                 </Button>
               </div>

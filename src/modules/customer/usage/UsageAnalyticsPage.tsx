@@ -26,10 +26,12 @@ import { StatCard } from '@/components/common/StatCard';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { formatNumber } from '@/utils/formatters';
+import { useTranslation } from '@/i18n';
 
 const PIE_COLORS = ['#2563eb', '#0ea5e9', '#10b981', '#8b5cf6', '#f59e0b', '#ec4899'];
 
 export const UsageAnalyticsPage: React.FC = () => {
+  const { t, dict } = useTranslation();
   const {
     activeCustomerId,
     dailyStats,
@@ -104,7 +106,7 @@ export const UsageAnalyticsPage: React.FC = () => {
 
   const handleExportCsv = () => {
     const rows = [
-      ['Date', 'Units', 'Jobs'],
+      [...dict.usageAnalytics.csvHeaders],
       ...filteredStats.map((r) => [r.fullDate, String(r.pages), String(r.jobs)]),
     ];
     const csv = rows.map((r) => r.join(',')).join('\n');
@@ -122,16 +124,23 @@ export const UsageAnalyticsPage: React.FC = () => {
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <Breadcrumbs items={[{ label: 'Customer Portal', path: '/app/dashboard' }, { label: 'Usage & Analytics' }]} />
-          <h1 className="text-2xl font-bold text-slate-900 mt-1 tracking-tight">Usage & Analytics</h1>
+          <Breadcrumbs
+            items={[
+              { label: t('common.customerPortal'), path: '/app/dashboard' },
+              { label: t('usageAnalytics.breadcrumbCurrent') },
+            ]}
+          />
+          <h1 className="text-2xl font-bold text-slate-900 mt-1 tracking-tight">
+            {t('usageAnalytics.title')}
+          </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Real-time telemetry, quota consumption rates, and OCR processing performance analytics.
+            {t('usageAnalytics.subtitle')}
           </p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={handleExportCsv}>
             <Download className="h-3.5 w-3.5 mr-1" />
-            Export CSV Report
+            {t('usageAnalytics.exportCsv')}
           </Button>
         </div>
       </div>
@@ -139,30 +148,46 @@ export const UsageAnalyticsPage: React.FC = () => {
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
-          title="Total Usage"
-          value={`${formatNumber(totalUsed)} units`}
-          subtitle={totalUsed > 0 ? 'Recorded across licenses' : 'No usage recorded'}
+          title={t('usageAnalytics.totalUsage')}
+          value={`${formatNumber(totalUsed)} ${t('common.units')}`}
+          subtitle={
+            totalUsed > 0
+              ? t('usageAnalytics.recordedAcrossLicenses')
+              : t('usageAnalytics.noUsageRecorded')
+          }
           icon={<FileCheck className="h-5 w-5" />}
           iconBgColor="bg-blue-50 text-blue-600"
         />
         <StatCard
-          title="Remaining Quota"
-          value={`${formatNumber(remaining)} units`}
-          subtitle={totalQuota > 0 ? 'From active licenses' : 'No active quota'}
+          title={t('usageAnalytics.remainingQuota')}
+          value={`${formatNumber(remaining)} ${t('common.units')}`}
+          subtitle={
+            totalQuota > 0
+              ? t('usageAnalytics.fromActiveLicenses')
+              : t('usageAnalytics.noActiveQuota')
+          }
           icon={<Zap className="h-5 w-5" />}
           iconBgColor="bg-emerald-50 text-emerald-600"
         />
         <StatCard
-          title="Usage Ratio"
+          title={t('usageAnalytics.usageRatio')}
           value={`${usagePercent}%`}
-          subtitle={totalQuota > 0 ? `${formatNumber(totalUsed)} / ${formatNumber(totalQuota)}` : 'Quota not allocated'}
+          subtitle={
+            totalQuota > 0
+              ? `${formatNumber(totalUsed)} / ${formatNumber(totalQuota)}`
+              : t('usageAnalytics.quotaNotAllocated')
+          }
           icon={<BarChart3 className="h-5 w-5" />}
           iconBgColor="bg-indigo-50 text-indigo-600"
         />
         <StatCard
-          title="Avg Latency"
+          title={t('usageAnalytics.avgLatency')}
           value={avgLatencySec}
-          subtitle={customerUsageSummary?.total_jobs ? `Across ${customerUsageSummary.total_jobs} job(s)` : 'No jobs processed'}
+          subtitle={
+            customerUsageSummary?.total_jobs
+              ? t('usageAnalytics.acrossJobs', { count: customerUsageSummary.total_jobs })
+              : t('usageAnalytics.noJobsProcessed')
+          }
           icon={<Clock className="h-5 w-5" />}
           iconBgColor="bg-amber-50 text-amber-600"
         />
@@ -172,7 +197,7 @@ export const UsageAnalyticsPage: React.FC = () => {
       <div className="flex flex-wrap items-center justify-between gap-4 bg-white p-4 rounded-xl border border-slate-200/80 shadow-xs">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5 text-xs text-slate-600 font-semibold">
-            <Calendar className="h-4 w-4 text-slate-400" /> Date Range:
+            <Calendar className="h-4 w-4 text-slate-400" /> {t('usageAnalytics.dateRangeLabel')}
           </div>
           {(['7', '14', '30'] as const).map((r) => (
             <button
@@ -182,7 +207,7 @@ export const UsageAnalyticsPage: React.FC = () => {
                 dateRange === r ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
-              Last {r} Days
+              {t('usageAnalytics.lastNDays', { days: r })}
             </button>
           ))}
         </div>
@@ -193,7 +218,7 @@ export const UsageAnalyticsPage: React.FC = () => {
             onChange={(e) => setSelectedService(e.target.value)}
             className="text-xs rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 focus:border-blue-500 focus:outline-none"
           >
-            <option value="all">All OCR Services</option>
+            <option value="all">{t('usageAnalytics.allServices')}</option>
             {services.map((s) => (
               <option key={s.id} value={s.id}>{s.name}</option>
             ))}
@@ -204,7 +229,7 @@ export const UsageAnalyticsPage: React.FC = () => {
             onChange={(e) => setSelectedLicense(e.target.value)}
             className="text-xs rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 focus:border-blue-500 focus:outline-none"
           >
-            <option value="all">All Bound Licenses</option>
+            <option value="all">{t('usageAnalytics.allLicenses')}</option>
             {customerLicenses.map((l) => (
               <option key={l.id} value={l.id}>{l.maskedKey} ({l.packageName})</option>
             ))}
@@ -216,11 +241,11 @@ export const UsageAnalyticsPage: React.FC = () => {
       {!hasUsageTrend && serviceBreakdown.length === 0 ? (
         <Card className="p-8 text-center bg-slate-50 border-slate-200">
           <BarChart3 className="h-10 w-10 text-slate-400 mx-auto mb-2" />
-          <h3 className="text-sm font-bold text-slate-700">Chưa có dữ liệu thống kê sử dụng</h3>
+          <h3 className="text-sm font-bold text-slate-700">{t('usageAnalytics.noStatsTitle')}</h3>
           <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
             {customerSubs.length === 0 && customerLicenses.length === 0
-              ? 'Tài khoản này chưa có lượt gọi API nào. Sau khi đăng ký gói OCR và thực hiện nhận diện văn bản, biểu đồ lưu lượng và tỷ lệ sử dụng sẽ xuất hiện tại đây.'
-              : 'Tài khoản đã có gói dịch vụ nhưng chưa thực hiện lượt nhận diện OCR nào.'}
+              ? t('usageAnalytics.noStatsNoPlanDesc')
+              : t('usageAnalytics.noStatsHasPlanDesc')}
           </p>
         </Card>
       ) : (
@@ -228,8 +253,8 @@ export const UsageAnalyticsPage: React.FC = () => {
           {/* Main Volume Chart */}
           <Card className="lg:col-span-2">
             <CardHeader>
-              <CardTitle>Daily Processing Volume Trend</CardTitle>
-              <CardDescription>Real units processed per day</CardDescription>
+              <CardTitle>{t('usageAnalytics.dailyVolumeTitle')}</CardTitle>
+              <CardDescription>{t('usageAnalytics.dailyVolumeDesc')}</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="h-72 w-full pt-2">
@@ -250,7 +275,7 @@ export const UsageAnalyticsPage: React.FC = () => {
                     <Area
                       type="monotone"
                       dataKey="pages"
-                      name="Units"
+                      name={t('usageAnalytics.unitsName')}
                       stroke="#2563eb"
                       strokeWidth={2}
                       fillOpacity={1}
@@ -265,8 +290,8 @@ export const UsageAnalyticsPage: React.FC = () => {
           {/* Service Share Breakdown */}
           <Card>
             <CardHeader>
-              <CardTitle>Usage Distribution</CardTitle>
-              <CardDescription>Real units consumed by service</CardDescription>
+              <CardTitle>{t('usageAnalytics.distributionTitle')}</CardTitle>
+              <CardDescription>{t('usageAnalytics.distributionDesc')}</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col items-center justify-center">
               {serviceBreakdown.length > 0 ? (
@@ -306,7 +331,7 @@ export const UsageAnalyticsPage: React.FC = () => {
                 </>
               ) : (
                 <div className="h-52 flex items-center justify-center text-xs text-slate-400 text-center">
-                  No service usage recorded.
+                  {t('usageAnalytics.noServiceUsage')}
                 </div>
               )}
             </CardContent>

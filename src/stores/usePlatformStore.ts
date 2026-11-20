@@ -34,6 +34,7 @@ import {
   ocrApi,
 } from '@/services/api/endpoints';
 import { api } from '@/services/api/client';
+import { getCurrentLang, translate } from '@/i18n';
 
 interface PlatformState {
   // Data
@@ -188,15 +189,16 @@ const saveStoredJobs = (jobs: OCRJob[]) => {
 };
 
 const formatDocTypeLabel = (detectedType?: string): string => {
+  const lang = getCurrentLang();
   switch (detectedType) {
     case 'id_card':
-      return 'Căn cước công dân (CCCD)';
+      return translate(lang, 'jobs.docTypes.id_card');
     case 'passport':
-      return 'Hộ chiếu (Passport)';
+      return translate(lang, 'jobs.docTypes.passport');
     case 'driver_license':
-      return 'Giấy phép lái xe (GPLX)';
+      return translate(lang, 'jobs.docTypes.driver_license');
     default:
-      return 'Giấy tờ tùy thân';
+      return translate(lang, 'jobs.docTypes.identity_document');
   }
 };
 
@@ -1020,15 +1022,16 @@ export const usePlatformStore = create<PlatformState>((set, get) => ({
     const target = get().licenses.find(
       (l) => l.licenseKey.toUpperCase() === cleanKey || l.maskedKey.toUpperCase() === cleanKey
     );
+    const lang = getCurrentLang();
     if (!target) {
-      return { success: false, message: 'Activation request submitted to server.' };
+      return { success: false, message: translate(lang, 'licenses.activationSubmitted') };
     }
     if (target.status === 'revoked') {
-      return { success: false, message: 'This License Key has been permanently revoked by administrator.' };
+      return { success: false, message: translate(lang, 'licenses.licenseRevokedError') };
     }
     return {
       success: true,
-      message: `License for ${target.serviceName} activation submitted!`,
+      message: translate(lang, 'licenses.licenseActivatedMsg', { service: target.serviceName }),
       license: target,
     };
   },

@@ -462,8 +462,9 @@ def test_hybrid_row_sorting_and_postprocessing_guardrails():
         {"bbox": [24, 360, 310, 415], "text": "Có giá trị đến: Không thời hạn"},
     ]
     cleaned = _postprocess_hybrid_extracted_data(llm_out, raw_lines)
-    assert cleaned["issue_place"] is None
-    assert cleaned["issue_date"] is None
+    assert cleaned["card_side"] == "front"
+    assert "issue_place" not in cleaned
+    assert "issue_date" not in cleaned
     assert cleaned["expiry_date"] == "Không thời hạn"
     assert cleaned["date_of_birth"] == "28/06/1958"
     assert cleaned["nationality"] is None
@@ -610,7 +611,9 @@ def test_ocr_hybrid_pipeline_api_text_only_payload(client, customer_one_token):
     assert body["segmentation_info"]["pipeline_mode"] == "hybrid_paddle_vl"
     assert body["segmentation_info"]["ocr_lines_count"] == 1
     assert body["segmentation_info"]["stage_timings_ms"]["paddleocr_vl_ms"] == 2800.0
-    assert body["extracted_data"]["issue_place"] is None
+    assert body["extracted_data"]["card_side"] == "front"
+    assert "issue_place" not in body["extracted_data"]
+    assert "issue_date" not in body["extracted_data"]
     sent_payload = json.loads(mock_url.call_args[0][0].data.decode("utf-8"))
     assert sent_payload["model"] == "qwen2.5:3b"
     assert "images" not in sent_payload["messages"][1]
@@ -649,7 +652,9 @@ def test_ocr_hybrid_paddle_vl_pipeline_api_and_model_routing(client, customer_on
     assert body["segmentation_info"]["ocr_lines_count"] == 2
     assert body["segmentation_info"]["stage_timings_ms"]["paddleocr_vl_ms"] == 5200.0
     assert body["extracted_data"]["id_number"] == "352022846"
-    assert body["extracted_data"]["issue_place"] is None
+    assert body["extracted_data"]["card_subtype"] == "CMND"
+    assert body["extracted_data"]["card_side"] == "front"
+    assert "issue_place" not in body["extracted_data"]
     sent_payload = json.loads(mock_url.call_args[0][0].data.decode("utf-8"))
     assert sent_payload["model"] == "qwen2.5:3b"
     assert "images" not in sent_payload["messages"][1]
@@ -1358,3 +1363,249 @@ def test_passport_stacked_row_grouping_name_guardrail_and_passport_type_confiden
     assert body["extracted_data"]["full_name"] == "TRẦN ANH TUẤN"
     assert body["field_confidences"]["passport_type"] >= 90.0
     assert body["field_confidences"]["full_name"] >= 95.0
+
+
+def test_td1_mrz_cleaners_and_plan_b_per_side_schemas():
+    import numpy as np
+    from app.modules.ocr_engine.service import (
+        _clean_td1_mrz_line1,
+        _clean_td1_mrz_line2,
+        _clean_td1_mrz_line3,
+        _parse_td1_mrz_fields,
+        _postprocess_hybrid_extracted_data,
+        _extract_text_lines_paddleocr_vl,
+    )
+
+    # 1. Clean & validate TD1 MRZ from real CCCD gắn chip back & Căn cước 2024 back templates
+    assert _clean_td1_mrz_line1("IDVNM16200015320841620001530") == "IDVNM1620001532084162000153<<0"
+    assert _clean_td1_mrz_line2("6201016F9912315VNM8") == "6201016F9912315VNM<<<<<<<<<<<8"
+    assert _clean_td1_mrz_line3("THACH<<THI<AM涓涓涓涓") == "THACH<<THI<AM<<<<<<<<<<<<<<<<<"
+
+    parsed_chip = _parse_td1_mrz_fields(
+        "IDVNM1620001532084162000153<<0",
+        "6201016F9912315VNM<<<<<<<<<<<8",
+        "THACH<<THI<AM<<<<<<<<<<<<<<<<<",
+    )
+    assert parsed_chip == {
+        "id_number": "084162000153",
+        "date_of_birth": "01/01/1962",
+        "gender": "Nữ",
+        "expiry_date": "Không thời hạn",
+        "nationality": "Việt Nam",
+    }
+
+    parsed_cc24 = _parse_td1_mrz_fields(
+        "IDVNM1990033878019199003387<<0",
+        "9906220F3906228VNM<<<<<<<<<<<0",
+        "TRAN<<THI<THU<<<<<<<<<<<<<<<<<",
+    )
+    assert parsed_cc24 == {
+        "id_number": "019199003387",
+        "date_of_birth": "22/06/1999",
+        "gender": "Nữ",
+        "expiry_date": "22/06/2039",
+        "nationality": "Việt Nam",
+    }
+
+    # 2. Plan B keys for Căn cước 2024 Front (strictly 8 keys, no addresses/expiry/issue_place)
+    cc24_front = _postprocess_hybrid_extracted_data(
+        {
+            "document_type": "id_card",
+            "id_number": "019199003387",
+            "full_name": "TRẦN THỊ THU",
+            "date_of_birth": "22/06/1999",
+            "gender": "Nữ",
+            "nationality": "Việt Nam",
+            "origin_address": "hallucinated",
+            "issue_place": "hallucinated",
+        },
+        [
+            {"bbox": [0, 0, 100, 20], "text": "CĂN CƯỚC"},
+            {"bbox": [0, 25, 100, 45], "text": "Số định danh cá nhân / Personal identification number: 019199003387"},
+            {"bbox": [0, 50, 100, 70], "text": "Họ, chữ đệm và tên khai sinh / Full name: TRẦN THỊ THU"},
+        ],
+    )
+    assert cc24_front["card_subtype"] == "Căn cước 2024"
+    assert cc24_front["card_side"] == "front"
+    assert set(cc24_front.keys()) == {
+        "document_type",
+        "card_subtype",
+        "card_side",
+        "id_number",
+        "full_name",
+        "date_of_birth",
+        "gender",
+        "nationality",
+    }
+
+    # 3. Plan B keys for CCCD gắn chip Back (with signer_name + auto-decoded TD1 MRZ fields)
+    chip_back = _postprocess_hybrid_extracted_data(
+        {
+            "document_type": "id_card",
+            "personal_identification": "Đặc điểm nhân dạng: Sẹo chấm C:3.6 cm dưới sau đuôi mắt phải",
+            "issue_date": "15/04/2021",
+            "issue_place": "CỤC TRƯỞNG CỤC CẢNH SÁT QUẢN LÝ HÀNH CHÍNH VỀ TRẬT TỰ XÃ HỘI",
+            "signer_name": "Phạm Công Nguyên",
+            "origin_address": "should be omitted",
+        },
+        [
+            {"bbox": [0, 0, 100, 20], "text": "Đặc điểm nhân dạng / Personal identification: Sẹo chấm C:3.6 cm dưới sau đuôi mắt phải"},
+            {"bbox": [0, 25, 100, 45], "text": "Ngày, tháng, năm / Date, month, year: 15/04/2021"},
+            {"bbox": [0, 50, 100, 70], "text": "CỤC TRƯỞNG CỤC CẢNH SÁT QUẢN LÝ HÀNH CHÍNH VỀ TRẬT TỰ XÃ HỘI"},
+            {"bbox": [0, 75, 100, 95], "text": "Phạm Công Nguyên"},
+            {"bbox": [0, 100, 100, 120], "text": "IDVNM1620001532084162000153<<0"},
+            {"bbox": [0, 125, 100, 145], "text": "6201016F9912315VNM<<<<<<<<<<<8"},
+            {"bbox": [0, 150, 100, 170], "text": "THACH<<THI<AM<<<<<<<<<<<<<<<<<"},
+        ],
+    )
+    assert chip_back["card_subtype"] == "CCCD gắn chip"
+    assert chip_back["card_side"] == "back"
+    assert chip_back["personal_identification"] == "Sẹo chấm C:3.6 cm dưới sau đuôi mắt phải"
+    assert chip_back["signer_name"] == "Phạm Công Nguyên"
+    assert chip_back["id_number"] == "084162000153"
+    assert chip_back["date_of_birth"] == "01/01/1962"
+    assert chip_back["gender"] == "Nữ"
+    assert chip_back["expiry_date"] == "Không thời hạn"
+    assert chip_back["nationality"] == "Việt Nam"
+    assert "origin_address" not in chip_back
+
+    # 4. Plan B keys for Căn cước 2024 Back (place_of_birth + residence_address + Bộ Công An + MRZ)
+    cc24_back = _postprocess_hybrid_extracted_data(
+        {
+            "document_type": "id_card",
+            "residence_address": "Nơi cư trú: Tổ 5, Phú Lương, Hà Đông, Hà Nội",
+            "place_of_birth": "Nơi đăng ký khai sinh: Thái Nguyên",
+            "issue_date": "05/07/2024",
+            "expiry_date": "22/06/2039",
+            "origin_address": "should be omitted",
+        },
+        [
+            {"bbox": [0, 0, 100, 20], "text": "BỘ CÔNG AN / MINISTRY OF PUBLIC SECURITY"},
+            {"bbox": [0, 25, 100, 45], "text": "Nơi cư trú / Place of residence: Tổ 5, Phú Lương, Hà Đông, Hà Nội"},
+            {"bbox": [0, 50, 100, 70], "text": "Nơi đăng ký khai sinh / Place of birth: Thái Nguyên"},
+            {"bbox": [0, 75, 100, 95], "text": "Ngày, tháng, năm cấp / Date of issue: 05/07/2024"},
+            {"bbox": [0, 100, 100, 120], "text": "IDVNM1990033878019199003387<<0"},
+            {"bbox": [0, 125, 100, 145], "text": "9906220F3906228VNM<<<<<<<<<<<0"},
+            {"bbox": [0, 150, 100, 170], "text": "TRAN<<THI<THU<<<<<<<<<<<<<<<<<"},
+        ],
+    )
+    assert cc24_back["card_subtype"] == "Căn cước 2024"
+    assert cc24_back["card_side"] == "back"
+    assert cc24_back["issue_place"] == "BỘ CÔNG AN"
+    assert cc24_back["place_of_birth"] == "Thái Nguyên"
+    assert "origin_address" not in cc24_back
+    assert "personal_identification" not in cc24_back
+
+    # 5. Plan B keys for old CMND Back (ethnic, religion, personal_identification)
+    cmnd_back = _postprocess_hybrid_extracted_data(
+        {
+            "document_type": "id_card",
+            "ethnic": "Dân tộc: Kinh",
+            "religion": "Tôn giáo: Không",
+            "personal_identification": "Dấu vết riêng và dị hình: Nốt ruồi C:2cm dưới sau đuôi mắt trái",
+            "issue_date": "12/05/2012",
+            "issue_place": "GIÁM ĐỐC CA TỈNH AN GIANG",
+        },
+        [
+            {"bbox": [0, 0, 100, 20], "text": "Dân tộc: Kinh   Tôn giáo: Không"},
+            {"bbox": [0, 25, 100, 45], "text": "Dấu vết riêng và dị hình: Nốt ruồi C:2cm dưới sau đuôi mắt trái"},
+            {"bbox": [0, 50, 100, 70], "text": "Ngày 12 tháng 05 năm 2012   GIÁM ĐỐC CA TỈNH AN GIANG"},
+        ],
+    )
+    assert cmnd_back["card_subtype"] == "CMND"
+    assert cmnd_back["card_side"] == "back"
+    assert cmnd_back["ethnic"] == "Kinh"
+    assert cmnd_back["religion"] == "Không"
+    assert "mrz_line1" not in cmnd_back
+
+    # 6. TD1 3-row bottom MRZ recovery in _extract_text_lines_paddleocr_vl
+    buf = io.BytesIO()
+    Image.new("RGB", (750, 500), color=(240, 240, 240)).save(buf, format="PNG")
+    fake_bgr = np.full((500, 750, 3), 240, dtype=np.uint8)
+    fake_boxes = [
+        {"bbox": [40, 30 + i * 35, 680, 55 + i * 35], "crop_rgb": np.full((25, 640, 3), 230, dtype=np.uint8)}
+        for i in range(6)
+    ]
+    fake_boxes[3]["bbox"] = [40, 355, 710, 385]
+    fake_boxes[4]["bbox"] = [40, 395, 710, 425]
+    fake_boxes[5]["bbox"] = [40, 435, 710, 465]
+    strip_txt = "BỘ CÔNG AN\nNơi cư trú: Hà Nội\nNơi đăng ký khai sinh: Thái Nguyên\nIDVNM19900338780191990033870"
+    fake_rec = MagicMock(
+        side_effect=[
+            ([["9906220F3906228VNM<<<<<<<<<<<0", 0.985]], None),
+            ([["TRAN<<THI<THU<<<<<<<<<<<<<<<<<", 0.980]], None),
+        ]
+    )
+    with patch("app.modules.ocr_engine.service._detect_text_boxes_bgr", return_value=(fake_bgr, fake_boxes, 15.0)), \
+         patch("app.modules.ocr_engine.service._call_paddleocr_vl_ollama", return_value=strip_txt), \
+         patch("app.modules.ocr_engine.service._get_rapidocr_rec", return_value=fake_rec):
+        td1_lines, _, _ = _extract_text_lines_paddleocr_vl(buf.getvalue())
+
+    assert td1_lines[-3]["text"] == "IDVNM1990033878019199003387<<0"
+    assert td1_lines[-2]["text"] == "9906220F3906228VNM<<<<<<<<<<<0"
+    assert td1_lines[-1]["text"] == "TRAN<<THI<THU<<<<<<<<<<<<<<<<<"
+
+
+def test_td1_mrz_auto_decode_when_field_score_is_low(client, customer_one_token):
+    packages = client.get("/api/v1/packages/pkg-test-1").json()
+    version_id = packages["current_version"]["id"]
+    order_id = client.post(
+        "/api/v1/orders",
+        headers={"Authorization": f"Bearer {customer_one_token}"},
+        json={"package_version_id": version_id},
+    ).json()["id"]
+    license_id = client.post(
+        f"/api/v1/orders/{order_id}/checkout",
+        headers={"Authorization": f"Bearer {customer_one_token}"},
+        json={"payment_method": "mock_card"},
+    ).json()["license_id"]
+
+    # Visual expiry_date is misread with low score (68.0 < 85.0), while TD1 MRZ lines have high confidence (98.0)
+    back_lines = [
+        {"bbox": [0, 0, 100, 18], "text": "BỘ CÔNG AN / MINISTRY OF PUBLIC SECURITY", "confidence": 96.0, "token_count": 6},
+        {"bbox": [0, 20, 100, 38], "text": "Nơi cư trú: Hà Đông, Hà Nội", "confidence": 95.0, "token_count": 6},
+        {"bbox": [0, 40, 100, 58], "text": "Nơi đăng ký khai sinh: Thái Nguyên", "confidence": 95.0, "token_count": 6},
+        {"bbox": [0, 60, 100, 78], "text": "05/07/2024", "confidence": 94.0, "token_count": 3},
+        {"bbox": [0, 80, 100, 98], "text": "22/06/2038", "confidence": 68.0, "token_count": 3},
+        {"bbox": [0, 100, 100, 118], "text": "IDVNM1990033878019199003387<<0", "confidence": 98.5, "token_count": 10},
+        {"bbox": [0, 120, 100, 138], "text": "9906220F3906228VNM<<<<<<<<<<<0", "confidence": 98.2, "token_count": 10},
+        {"bbox": [0, 140, 100, 158], "text": "TRAN<<THI<THU<<<<<<<<<<<<<<<<<", "confidence": 97.5, "token_count": 8},
+    ]
+
+    sample_img = make_sample_id_with_background_bytes()
+    with patch("app.modules.ocr_engine.service._extract_text_lines_paddleocr_vl", return_value=(back_lines, 90.0, 1200.0)), \
+         patch("urllib.request.urlopen") as mock_url:
+        mock_url.return_value.__enter__.return_value = mock_ollama_response({
+            "document_type": "id_card",
+            "card_subtype": "Căn cước 2024",
+            "card_side": "back",
+            "residence_address": "Hà Đông, Hà Nội",
+            "place_of_birth": "Thái Nguyên",
+            "issue_date": "05/07/2024",
+            "expiry_date": "22/06/2038",
+            "issue_place": "BỘ CÔNG AN",
+            "mrz_line1": "IDVNM1990033878019199003387<<0",
+            "mrz_line2": "9906220F3906228VNM<<<<<<<<<<<0",
+            "mrz_line3": "TRAN<<THI<THU<<<<<<<<<<<<<<<<<",
+        })
+        res = client.post(
+            "/api/v1/ocr/process-identity",
+            headers={"Authorization": f"Bearer {customer_one_token}"},
+            files={"file": ("cancuoc_back.jpg", io.BytesIO(sample_img), "image/jpeg")},
+            data={"license_id": license_id},
+        )
+
+    assert res.status_code == 200
+    body = res.json()
+    ex = body["extracted_data"]
+    fc = body["field_confidences"]
+    # expiry_date had low visual score (68.0 < 85.0) -> auto-corrected from MRZ to 22/06/2039 with MRZ confidence
+    assert ex["expiry_date"] == "22/06/2039"
+    assert fc["expiry_date"] == 98.2
+    # Missing MRZ fields on back side auto-populated from TD1 MRZ
+    assert ex["id_number"] == "019199003387"
+    assert ex["date_of_birth"] == "22/06/1999"
+    assert ex["gender"] == "Nữ"
+    assert ex["nationality"] == "Việt Nam"
+    assert fc["id_number"] == 98.5
+    assert "origin_address" not in ex
